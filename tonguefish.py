@@ -12,7 +12,8 @@ import pickle
 from string import Template
 from zoneinfo import ZoneInfo
 from datetime import datetime, timezone
-from collections import defaultdict
+from collections import defaultdict, ChainMap
+from itertools import chain
 
 import tomlkit
 import feedparser
@@ -131,11 +132,13 @@ def update_feed(cache_url, feed_conf, old_feed_obj=None):
         feed_obj = feedparser.parse(url)
     
     if feed_obj.status == 200:
+        print(f"{url}: updated.")
+        SEEN_CACHE.add(cache_url)
         dump_feed_obj(feed_obj, cache_url)
         return feed_obj
     
     elif old_feed_obj and feed_obj.status == 304:
-        print("No update required.")
+        print(f"{url}: no update required.")
         return old_feed_obj
     
     elif feed_obj.status == 301:
@@ -207,7 +210,7 @@ def get_digest(feed_obj, ignore, ignore_source):
         dt = e.get("published_parsed", e.get("updated_parsed", None))
         digest_entries[(dt.tm_year, dt.tm_yday)].append(e)
     
-    for _, entries in reversed(sorted(digest_entries.items())):
+    for _, entries in sorted(digest_entries.items(), reverse=True):
         dates = [e.published_parsed for e in entries]
         titles = [e.title for e in entries]
         links = [e.link for e in entries]
@@ -240,8 +243,22 @@ def get_digest(feed_obj, ignore, ignore_source):
     return fake_obj;
 
 
-def get_group(feed_conf):
-    pass # TODO
+def get_group(name, feeds):
+    feed_confs, feed_objs = zip(*feeds)
+    
+    for f in feed_objs:
+        for e in f.entries:
+            e.title = f"{f.feed.title}: {e.title}"
+    
+    fake_obj = FakeObj()
+    fake_obj.feed = FakeObj()
+    fake_obj.feed.title = name.title()
+    fake_obj.entries = sorted(chain.from_iterable(f.entries for f in feed_objs), key=lambda e: e.get("published_parsed", e.get("updated_parsed")), reverse=True)
+    
+    fake_conf = dict(ChainMap(*(f["group"] for f in feed_confs)))
+    fake_conf["group_obj"] = fake_obj
+    
+    return fake_conf
 
 
 ###############################################################################
@@ -259,28 +276,36 @@ for stylesheet in CSS:
     except shutil.SameFileError:
         pass # File is the same
 
+stylesheets = "\n".join(STYLESHEET.safe_substitute(stylesheet=os.path.basename(s)) for s in CSS)
+header = HEADER.safe_substitute(stylesheets=stylesheets)
+now = datetime.now(ZoneInfo(conf["timezone"]))
+all_feeds = conf["feeds"][:]
+groups = defaultdict(list)
 
 # Process the feeds
 with open(OUTFILE, "w") as out:
-    now = datetime.now(ZoneInfo(conf["timezone"]))
-    stylesheets = "\n".join(STYLESHEET.safe_substitute(stylesheet=os.path.basename(s)) for s in CSS)
-    header = HEADER.safe_substitute(stylesheets=stylesheets)
-    
     out.write(header)
     
-    for i, feed_conf in enumerate(conf["feeds"]):
-        try:
-            feed_obj = get_feed_obj(feed_conf)
-        except ValueError as e:
-            print(f"Error at feed {i}: {e}")
-            continue
+    for i, feed_conf in enumerate(all_feeds, 1):
+        if "group_obj" in feed_conf:
+            feed_obj = feed_conf["group_obj"]
+        else:
+            try:
+                feed_obj = get_feed_obj(feed_conf)
+            except ValueError as e:
+                print(f"Error at feed {i}: {e}")
+                continue
         
         ignore = None
         if "ignore" in feed_conf:
             ignore = re.compile(feed_conf["ignore"]["find"])
             ignore_source = feed_conf["ignore"]["source"]
-        
-        # TODO handle grouped feeds before digest
+                
+        if "group" in feed_conf:
+            groups[feed_conf["group"]["name"]].append((feed_conf, feed_obj))
+            if i == len(conf["feeds"]):
+                all_feeds.extend(get_group(n, fs) for n, fs in groups.items())
+            continue
         
         if "digest" in feed_conf:
             feed_obj = get_digest(feed_obj, ignore, ignore_source)
@@ -303,7 +328,7 @@ with open(OUTFILE, "w") as out:
                 continue
             
             classes = entry_classes[:]
-            date_tuple = e.get("published_parsed", e.get("updated_parsed", None))
+            date_tuple = e.get("published_parsed", e.get("updated_parsed"))
             date_obj = datetime.fromtimestamp(calendar.timegm(date_tuple), timezone.utc)
             age = now - date_obj
             
@@ -337,6 +362,9 @@ with open(OUTFILE, "w") as out:
                 break;
         
         out.write(FEEDFOOTER)
+        
+        if i == len(conf["feeds"]):
+            all_feeds.extend(get_group(n, fs) for n, fs in groups.items())
     
     out.write(FOOTER)
 
