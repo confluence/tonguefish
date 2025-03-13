@@ -18,15 +18,11 @@ import tomlkit
 import feedparser
 
 try:
-    INDIR, OUTDIR = sys.argv[1:3]
+    INDIR, OUTDIR, CACHEDIR = sys.argv[1:4]
 except ValueError:
-    sys.exit("usage: tonguefish.py <inputdir> <outputdir> [<cachedir>]")
+    sys.exit("usage: tonguefish.py <inputdir> <outputdir> <cachedir>")
 
-try:
-    CACHEDIR = sys.argv[3]
-    SEEN_CACHE = set()
-except IndexError:
-    CACHEDIR = None
+SEEN_CACHE = set()
 
 CONF = os.path.join(INDIR, "feeds.toml")
 OUTFILE = os.path.join(OUTDIR, "index.html")
@@ -34,11 +30,16 @@ ERRORFILE = os.path.join(OUTDIR, "errors")
 CSS = glob.glob(os.path.join(INDIR, "*.css"))
 
 # TODO read these from the conf file!
+
 # TODO dynamic filters
 # TODO categories
 # TODO thismonth, thisyear
-# TODO remove limits by default?
-# TODO default filter
+# TODO remove limits by default? Less slow now that images are lazy?
+# TODO default filter view
+# TODO category and age filters should be independent (two rows)
+# TODO category filters should apply to whole feeds (give feed a category class)
+# TODO write out category and age filter CSS dynamically into separate files
+
 HEADER = Template("""
 <!doctype html>
 <html lang="en">
@@ -104,30 +105,26 @@ def dump_feed_obj(feed_obj, path):
 
 def get_feed_obj(feed_conf):
     url = feed_conf["url"]
+    url_hash = hashlib.sha1(url.encode("utf-8")).hexdigest()
+    cache_url = os.path.join(CACHEDIR, url_hash)
+    SEEN_CACHE.add(cache_url)
     
-    if CACHEDIR:
-        url_hash = hashlib.sha1(url.encode("utf-8")).hexdigest()
-        cache_url = os.path.join(CACHEDIR, url_hash)
-        SEEN_CACHE.add(cache_url)
-    
-        if os.path.isfile(cache_url):
-            with open(cache_url, "rb") as f:
-                feed_obj = pickle.load(f) # TODO handle pickle version changing, which necessitates reload
-            # TODO uncomment after testing is done
-            #etag = feed_obj.get("etag")
-            #modified = feed_obj.get("modified")
-            #print(f"+++ feed {feed_obj.feed.link} etag {etag} modified {modified}")
-            #newer_feed_obj = feedparser.parse(url, etag=etag, modified=modified)
-            #print(f"+++ status of request {newer_feed_obj.status}")
-            #if newer_feed_obj.status == 200: # TODO handle redirects / dead links
-                #feed_obj = newer_feed_obj
-                #dump_feed_obj(feed_obj, cache_url)
-        else:
-            feed_obj = feedparser.parse(url)
-            if feed_obj.status == 200: # TODO handle redirects / dead links
-                dump_feed_obj(feed_obj, cache_url)
+    if os.path.isfile(cache_url):
+        with open(cache_url, "rb") as f:
+            feed_obj = pickle.load(f) # TODO handle pickle version changing, which necessitates reload
+        # TODO uncomment after testing is done
+        #etag = feed_obj.get("etag")
+        #modified = feed_obj.get("modified")
+        #print(f"+++ feed {feed_obj.feed.link} etag {etag} modified {modified}")
+        #newer_feed_obj = feedparser.parse(url, etag=etag, modified=modified)
+        #print(f"+++ status of request {newer_feed_obj.status}")
+        #if newer_feed_obj.status == 200: # TODO handle redirects / dead links
+            #feed_obj = newer_feed_obj
+            #dump_feed_obj(feed_obj, cache_url)
     else:
         feed_obj = feedparser.parse(url)
+        if feed_obj.status == 200: # TODO handle redirects / dead links
+            dump_feed_obj(feed_obj, cache_url)
     
     return feed_obj
 
@@ -212,9 +209,6 @@ except FileNotFoundError:
 
 NOW = datetime.now(ZoneInfo(conf["timezone"]))
 
-# TODO TODO TODO FILTERS!
-# Use target or checkbox trick with next sibling selector
-
 with open(OUTFILE, "w") as out:
     stylesheets = "\n".join(STYLESHEET.safe_substitute(stylesheet=os.path.basename(s)) for s in CSS)
     header = HEADER.safe_substitute(stylesheets=stylesheets)
@@ -274,8 +268,7 @@ with open(OUTFILE, "w") as out:
         out.write(FEEDFOOTER)
     
     out.write(FOOTER)
-    
-if CACHEDIR:
-    for cache_url in glob.glob(os.path.join(CACHEDIR, "*")):
-        if cache_url not in SEEN_CACHE:
-            os.remove(cache_url)
+
+for cache_url in glob.glob(os.path.join(CACHEDIR, "*")):
+    if cache_url not in SEEN_CACHE:
+        os.remove(cache_url)
