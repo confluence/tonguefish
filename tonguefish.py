@@ -55,6 +55,10 @@ HEADER = Template("""
 <label for="today">Today</label>
 <input type="radio" id="thisweek" name="filter" />
 <label for="thisweek">This week</label>
+<input type="radio" id="thismonth" name="filter" />
+<label for="thismonth">This month</label>
+<input type="radio" id="thisyear" name="filter" />
+<label for="thisyear">This year</label>
 <div id="main">
 """)
 
@@ -229,8 +233,8 @@ with open(OUTFILE, "w") as out:
         feedtitle = feed_conf.get("title") or feed_obj.feed.title
         out.write(FEEDHEADER.safe_substitute(feedtitle=feedtitle))
         
-        max_num = feed_conf.get("max_entry_num", conf["max_entry_num"])
-        max_age = feed_conf.get("max_entry_age", conf["max_entry_age"])
+        max_num = feed_conf.get("max_entry_num", conf.get("max_entry_num", 0))
+        max_age = feed_conf.get("max_entry_age", conf.get("max_entry_age", 0))
         num_entries = 0
         
         entry_classes = ["entry"]
@@ -244,7 +248,7 @@ with open(OUTFILE, "w") as out:
             date_obj = datetime.fromtimestamp(calendar.timegm(date_tuple), timezone.utc)
             age = NOW - date_obj
             
-            if age.days > max_age:
+            if max_age and age.days > max_age:
                 continue
             
             if age.days < 1:
@@ -252,6 +256,14 @@ with open(OUTFILE, "w") as out:
             
             if age.days < 7:
                 classes.append("thisweek")
+                
+            # Todo make this more precise?
+                
+            if age.days < 30:
+                classes.append("thismonth")
+                
+            if age.days < 365:
+                classes.append("thisyear")
             
             date_str = date_obj.strftime("%b %d")
             
@@ -262,7 +274,7 @@ with open(OUTFILE, "w") as out:
             out.write(ENTRY.safe_substitute(classes=classes_str, date=date_str, link=e.link, title=e.title, blurb=description, feedtitle=feedtitle))
             
             num_entries += 1
-            if num_entries > max_num:
+            if max_num and num_entries >= max_num:
                 break;
         
         out.write(FEEDFOOTER)

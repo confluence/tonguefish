@@ -13,6 +13,10 @@ body {
     padding: 10px;
 }
 
+div.feed:not(:has(li)) {
+    diplay: none;
+}
+
 h1 {
     font-size: 12pt;
     font-weight: bold;
@@ -101,5 +105,29 @@ input#today:checked~#main li:not(.today) {
 }
 
 input#thisweek:checked~#main li:not(.thisweek) {
+    display: none;
+}
+
+input#thismonth:checked~#main li:not(.thismonth) {
+    display: none;
+}
+
+input#thisyear:checked~#main li:not(.thisyear) {
+    display: none;
+}
+
+input#today:checked~#main div.feed:not(:has(li.today)) {
+    display: none;
+}
+
+input#thisweek:checked~#main div.feed:not(:has(li.thisweek)) {
+    display: none;
+}
+
+input#thismonth:checked~#main div.feed:not(:has(li.thismonth)) {
+    display: none;
+}
+
+input#thisyear:checked~#main div.feed:not(:has(li.thisyear)) {
     display: none;
 }
