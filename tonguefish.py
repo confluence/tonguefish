@@ -17,27 +17,31 @@ from collections import defaultdict
 import tomlkit
 import feedparser
 
+###############################################################################
+## CONSTANTS                                                                 ##
+###############################################################################
+
 try:
     INDIR, OUTDIR, CACHEDIR = sys.argv[1:4]
 except ValueError:
-    sys.exit("usage: tonguefish.py <inputdir> <outputdir> <cachedir>")
+    sys.exit("usage: tonguefish.py <inputdir> <outputdir> <cachedir> [NOUPDATE]")
 
 SEEN_CACHE = set()
 
 CONF = os.path.join(INDIR, "feeds.toml")
 OUTFILE = os.path.join(OUTDIR, "index.html")
-ERRORFILE = os.path.join(OUTDIR, "errors")
 CSS = glob.glob(os.path.join(INDIR, "*.css"))
+
+NOUPDATE = len(sys.argv) > 4 and sys.argv[4] == "NOUPDATE"
+if NOUPDATE:
+    print("NOUPDATE option is enabled. Will not check for updates or fetch missing feeds.")
 
 # TODO read these from the conf file!
 
 # TODO dynamic filters
 # TODO categories
-# TODO thismonth, thisyear
-# TODO remove limits by default? Less slow now that images are lazy?
 # TODO default filter view
 # TODO category and age filters should be independent (two rows)
-# TODO category filters should apply to whole feeds (give feed a category class)
 # TODO write out category and age filter CSS dynamically into separate files
 
 HEADER = Template("""
@@ -95,63 +99,104 @@ ENTRY = Template("""
 </li>
 """)
 
-def dump_feed_obj(feed_obj, path):
+###############################################################################
+## FUNCTIONS & CLASSES                                                       ##
+###############################################################################
+
+def dump_feed_obj(feed_obj, cache_url):
     # We have to do this to stop pickle from blowing up because SAXParseException contains a closed file-like object
     # https://alligatr.co.uk/blog/valueerror/
     if feed_obj.bozo:
-        with open(ERRORFILE, "a") as f:
-            f.write(f"{feed_obj.feed.link}: stripping error {feed_obj.bozo_exception} before pickling\n")
+        print(f"{feed_obj.feed.link}: stripping error {feed_obj.bozo_exception} before pickling")
         del feed_obj["bozo_exception"]
         feed_obj["bozo"] = False
     
-    with open(path, "wb") as f:
+    with open(cache_url, "wb") as f:
         pickle.dump(feed_obj, f)
 
-def get_feed_obj(feed_conf):
-    url = feed_conf["url"]
+
+def get_cache_url(url):
     url_hash = hashlib.sha1(url.encode("utf-8")).hexdigest()
-    cache_url = os.path.join(CACHEDIR, url_hash)
-    SEEN_CACHE.add(cache_url)
+    return os.path.join(CACHEDIR, url_hash)
+
+
+def update_feed(cache_url, feed_conf, old_feed_obj=None):
+    url = feed_conf["url"]
     
-    if os.path.isfile(cache_url):
-        with open(cache_url, "rb") as f:
-            feed_obj = pickle.load(f) # TODO handle pickle version changing, which necessitates reload
-        # TODO uncomment after testing is done
-        #etag = feed_obj.get("etag")
-        #modified = feed_obj.get("modified")
-        #print(f"+++ feed {feed_obj.feed.link} etag {etag} modified {modified}")
-        #newer_feed_obj = feedparser.parse(url, etag=etag, modified=modified)
-        #print(f"+++ status of request {newer_feed_obj.status}")
-        #if newer_feed_obj.status == 200: # TODO handle redirects / dead links
-            #feed_obj = newer_feed_obj
-            #dump_feed_obj(feed_obj, cache_url)
+    if old_feed_obj:
+        etag = old_feed_obj.get("etag")
+        modified = old_feed_obj.get("modified")
+        feed_obj = feedparser.parse(url, etag=etag, modified=modified)
     else:
         feed_obj = feedparser.parse(url)
-        if feed_obj.status == 200: # TODO handle redirects / dead links
-            dump_feed_obj(feed_obj, cache_url)
     
-    return feed_obj
+    if feed_obj.status == 200:
+        dump_feed_obj(feed_obj, cache_url)
+        return feed_obj
+    
+    elif old_feed_obj and feed_obj.status == 304:
+        print("No update required.")
+        return old_feed_obj
+    
+    elif feed_obj.status == 301:
+        old_url = feed_conf["url"]
+        print(f"{old_url} has redirected permanently to {feed_obj.href} -- updating config.")
+        feed_conf["url"] = feed_obj.href
+        feed_conf["url"].comment(f"# Updated automatically from {old_url}")
+        SEEN_CACHE.remove(cache_url)
+        cache_url = get_cache_url(feed_conf["url"])
+        SEEN_CACHE.add(cache_url)
+        dump_feed_obj(feed_obj, cache_url)
+        return feed_obj
+        
+    elif feed_obj.status == 410:
+        old_url = feed_conf["url"]
+        print(f"{old_url} is gone -- updating config.")
+        feed_conf["url_disabled"] = old_url
+        feed_conf["url_disabled"].comment("# This feed is gone and should be removed.")
+        del feed_conf["url"]
+        raise ValueError("Server returned 410 response (feed is gone).")
+    
+    else:
+        raise ValueError(f"Server returned {feed_obj.status} response.")
+
+
+def get_feed_obj(feed_conf):
+    if not "url" in feed_conf:
+        raise ValueError("No URL found in feed config.")
+    
+    url = feed_conf["url"]
+    cache_url = get_cache_url(url)
+    
+    if os.path.isfile(cache_url):
+        SEEN_CACHE.add(cache_url)
+        
+        with open(cache_url, "rb") as f:
+            feed_obj = pickle.load(f) # TODO handle pickle version changing, which necessitates reload
+        
+        if NOUPDATE:
+            return feed_obj
+        
+        return update_feed(cache_url, feed_conf, feed_obj)
+    else:
+        if NOUPDATE:
+            raise ValueError("Feed is not in cache and will not be fetched because NOUPDATE is enabled.")
+        
+        return update_feed(cache_url, feed_conf)
+
 
 class FakeObj:
     def get(self, name, default=None):
         return getattr(self, name, default)
 
-def get_digest(feed_conf):
-    feed_obj = get_feed_obj(feed_conf)
-    
+
+def get_digest(feed_obj, ignore, ignore_source):
     fake_obj = FakeObj()
     fake_obj.feed = FakeObj()
     fake_obj.feed.title = feed_obj.feed.title
     fake_obj.entries = []
     
     digest_entries = defaultdict(list)
-    
-    ignore = None
-    ignore_source = None
-    
-    if "ignore" in feed_conf:
-        ignore = re.compile(feed_conf["ignore"]["find"])
-        ignore_source = feed_conf["ignore"]["source"]
     
     dc = feed_conf["digest"]
     
@@ -194,11 +239,19 @@ def get_digest(feed_conf):
         
     return fake_obj;
 
+
 def get_group(feed_conf):
     pass # TODO
 
+
+###############################################################################
+## MAIN                                                                      ##
+###############################################################################
+
+
 with open(CONF) as f:
     conf = tomlkit.parse(f.read())
+
 
 for stylesheet in CSS:
     try:
@@ -206,29 +259,32 @@ for stylesheet in CSS:
     except shutil.SameFileError:
         pass # File is the same
 
-try:
-    os.remove(ERRORFILE)
-except FileNotFoundError:
-    pass # File does not exist
 
-NOW = datetime.now(ZoneInfo(conf["timezone"]))
-
+# Process the feeds
 with open(OUTFILE, "w") as out:
+    now = datetime.now(ZoneInfo(conf["timezone"]))
     stylesheets = "\n".join(STYLESHEET.safe_substitute(stylesheet=os.path.basename(s)) for s in CSS)
     header = HEADER.safe_substitute(stylesheets=stylesheets)
     
     out.write(header)
     
-    for feed_conf in conf["feeds"]:
-        if not "url" in feed_conf:
+    for i, feed_conf in enumerate(conf["feeds"]):
+        try:
+            feed_obj = get_feed_obj(feed_conf)
+        except ValueError as e:
+            print(f"Error at feed {i}: {e}")
             continue
         
-        # TODO handle grouped feeds
+        ignore = None
+        if "ignore" in feed_conf:
+            ignore = re.compile(feed_conf["ignore"]["find"])
+            ignore_source = feed_conf["ignore"]["source"]
+        
+        # TODO handle grouped feeds before digest
         
         if "digest" in feed_conf:
-            feed_obj = get_digest(feed_conf)
-        else:
-            feed_obj = get_feed_obj(feed_conf)
+            feed_obj = get_digest(feed_obj, ignore, ignore_source)
+            ignore = None # Ignore is applied once only to the original items
         
         feedtitle = feed_conf.get("title") or feed_obj.feed.title
         out.write(FEEDHEADER.safe_substitute(feedtitle=feedtitle))
@@ -243,10 +299,13 @@ with open(OUTFILE, "w") as out:
             entry_classes.append(category)
         
         for e in feed_obj.entries:
+            if ignore and ignore.search(e.get(ignore_source)):
+                continue
+            
             classes = entry_classes[:]
             date_tuple = e.get("published_parsed", e.get("updated_parsed", None))
             date_obj = datetime.fromtimestamp(calendar.timegm(date_tuple), timezone.utc)
-            age = NOW - date_obj
+            age = now - date_obj
             
             if max_age and age.days > max_age:
                 continue
@@ -281,6 +340,13 @@ with open(OUTFILE, "w") as out:
     
     out.write(FOOTER)
 
+
+# Prune unneeded cache files
 for cache_url in glob.glob(os.path.join(CACHEDIR, "*")):
     if cache_url not in SEEN_CACHE:
         os.remove(cache_url)
+
+
+# Write out the config, which may have been modified
+with open(CONF, "w") as f:
+    f.write(tomlkit.dumps(conf))

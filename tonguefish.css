@@ -13,6 +13,10 @@ body {
     padding: 10px;
 }
 
+div.feed {
+    break-inside: avoid-column;
+}
+
 div.feed:not(:has(li)) {
     diplay: none;
 }
