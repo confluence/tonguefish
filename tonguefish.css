@@ -95,3 +95,11 @@ li:hover > .blurb {
 {
     will-change: unset !important;
 }
+
+input#today:checked~#main li:not(.today) {
+    display: none;
+}
+
+input#thisweek:checked~#main li:not(.thisweek) {
+    display: none;
+}

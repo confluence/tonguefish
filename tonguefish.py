@@ -34,6 +34,11 @@ ERRORFILE = os.path.join(OUTDIR, "errors")
 CSS = glob.glob(os.path.join(INDIR, "*.css"))
 
 # TODO read these from the conf file!
+# TODO dynamic filters
+# TODO categories
+# TODO thismonth, thisyear
+# TODO remove limits by default?
+# TODO default filter
 HEADER = Template("""
 <!doctype html>
 <html lang="en">
@@ -43,6 +48,12 @@ HEADER = Template("""
     $stylesheets
 </head>
 <body>
+<input type="radio" id="all" name="filter" checked />
+<label for="all">All entries</label>
+<input type="radio" id="today" name="filter" />
+<label for="today">Today</label>
+<input type="radio" id="thisweek" name="filter" />
+<label for="thisweek">This week</label>
 <div id="main">
 """)
 
@@ -101,7 +112,7 @@ def get_feed_obj(feed_conf):
     
         if os.path.isfile(cache_url):
             with open(cache_url, "rb") as f:
-                feed_obj = pickle.load(f) # TODO handle pickle version changin, which necessitates reload
+                feed_obj = pickle.load(f) # TODO handle pickle version changing, which necessitates reload
             # TODO uncomment after testing is done
             #etag = feed_obj.get("etag")
             #modified = feed_obj.get("modified")
@@ -160,6 +171,8 @@ def get_digest(feed_conf):
         fake_e.published_parsed = [sum(l)//len(l) for l in zip(*dates)]
         fake_e.description = "\n".join(f'<h1><a href="{l}">{t}</a></h1>\n{d}' for t, l, d in zip(titles, links, descriptions))
         
+        # TODO: handle default digest name title and link with no special parsing (day and main feed link)
+        
         sources = {
             "link": links,
             "title": titles,
@@ -198,6 +211,9 @@ except FileNotFoundError:
     pass # File does not exist
 
 NOW = datetime.now(ZoneInfo(conf["timezone"]))
+
+# TODO TODO TODO FILTERS!
+# Use target or checkbox trick with next sibling selector
 
 with open(OUTFILE, "w") as out:
     stylesheets = "\n".join(STYLESHEET.safe_substitute(stylesheet=os.path.basename(s)) for s in CSS)
