@@ -142,15 +142,13 @@ group = "example"
 
 You need an input directory, an output directory, and a cache directory. The input directory must contain at minimum a `feeds.toml` file and a copy of or symbolic link to the `tonguefish.css` stylesheet. Custom CSS can be placed in separate files in the input directory; they will be copied to the output directory. The `tonguefish.py` script is standalone, and can be run from / moved to any working directory.
 
-`feeds.toml` must have a timezone configured.
-
 `tonguefish` can be run with feed updates disabled (useful for changing configuration of existing feeds, or development of `tonguefish` itself).
 
 Because the page doesn't use any JavaScript, you can use it without a webserver, just by opening the file in your browser. Because the browser syncs visited state for you, you can run a copy locally on each device (you only have to sync your `feeds.toml` and any custom CSS). You can also host it on a webserver if you want to, but that's outside the scope of these instructions.
 
 ### Install
 
-These are example instructions for Linux (a recent Ubuntu LTS release). `tonguefish` has not been tested on other operating systems; it probably works anywhere you can install Python 3. On Windows you will definitely also need the `tzdata` package to provide the IANA timezone database.
+These are example instructions for Linux (a recent Ubuntu LTS release). `tonguefish` has not been tested on other operating systems; it probably works anywhere you can install Python 3. On Windows you will also need the `tzdata` package if you want to use an IANA string to configure a local timezone.
 
 You should probably do this inside a virtualenv instead of using `sudo`; do as I say, not as I do.
 
@@ -170,7 +168,6 @@ mkdir input output cache
 
 # Set up basic config
 ln -s ../tonguefish.css input
-echo "timezone = \"`cat /etc/timezone`\"" > input/feeds.toml
 
 # Now edit feeds.toml to add your feeds
 vim input/feeds.toml
@@ -196,6 +193,18 @@ vim input/feeds.toml
 
 # Run tonguefish with updates disabled
 ./tonguefish.py input output cache NOUPDATE
+```
+
+### Configure local time
+
+If you're running `tonguefish` on a local computer, you can probably just let it guess the local time offset from your system. If you're running it on a remote computer in a different time zone, you can configure a specific local time for it to use.
+
+```toml
+# Set a timezone (IANA string)
+timezone = "Africa/Johannesburg"
+
+# Set a timezone (fixed hour offset)
+tzoffset = 2
 ```
 
 ### Set up updates

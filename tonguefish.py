@@ -11,7 +11,7 @@ import pickle
 
 from string import Template
 from zoneinfo import ZoneInfo
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from collections import defaultdict, ChainMap
 from itertools import chain
 
@@ -346,7 +346,16 @@ if not "feeds" in conf:
     sys.exit("No feeds configured. Nothing to do.")
     
 # Use a single "now" for the whole run
-now = datetime.now(ZoneInfo(conf["timezone"]))
+if "timezone" in conf:
+    # IANA string
+    now = datetime.now(ZoneInfo(conf["timezone"]))
+elif "tzoffset" in conf:
+    # hour offset
+    now = datetime.now(timezone(timedelta(hours=conf["tzoffset"])))
+else:
+    # use system time
+    now = datetime.now().astimezone()
+
 print("Running tonguefish at", now.strftime("%a %d %b %Y, %H:%M"))
 
 # Copy input stylesheets
@@ -494,7 +503,8 @@ with open(OUTFILE, "w") as out:
             classes = entry_classes[:]
             
             date_tuple = e.get("published_parsed", e.get("updated_parsed"))
-            date_obj = datetime.fromtimestamp(calendar.timegm(date_tuple), timezone.utc)
+            # Naive tuple in UTC -> aware datetime in UTC -> aware datetime in localtime
+            date_obj = datetime.fromtimestamp(calendar.timegm(date_tuple), timezone.utc).astimezone(now.tzinfo)
             age = now - date_obj
             
             if max_age and age.days > max_age:
@@ -514,6 +524,7 @@ with open(OUTFILE, "w") as out:
             if age.days < 365:
                 classes.append("thisyear")
             
+            # This will be in localtime
             date_str = date_obj.strftime("%b %d")
             
             classes_str = " ".join(classes)
