@@ -115,7 +115,7 @@ title = 'Issue \1'
 
 ### Group
 
-Groups from multiple feeds can be aggregated into a single feed. The intended use case is grouping individual account feeds from a website which does not offer a single feed for all your subscriptions.
+Entries from multiple feeds can be aggregated into a single feed. The intended use case is grouping individual account feeds from a website which does not offer a single feed for all your subscriptions.
 
 Additional custom properties (such as title, category, ignore or digest rules) that are defined on feeds in the same group are merged together and applied only to the final grouped feed. They should only be defined on a single group in the feed; merging multiple definitions is unsupported and can give unpredictable results.
 
