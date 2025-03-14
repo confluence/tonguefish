@@ -4,8 +4,21 @@ body {
     padding: 0;
 }
 
+#filters {
+    width: calc(66% - 20px);
+    margin: 0;
+    padding: 10px;
+    font-size: 12pt;
+    font-weight: bold;
+}
+
+#filters hr {
+    margin: 5px 0 0 0;
+    border: none;
+}
+
 #main {
-    width: calc(66% - 15px);
+    width: calc(66% - 20px);
     column-count: 4;
     height: 100%;
     overflow: scroll;
@@ -61,7 +74,7 @@ a:hover {
     position: fixed;
     top: 0px;
     right: 0px;
-    width: calc(33% - 15px);
+    width: calc(34% - 20px);
     padding: 10px;
     height: 100%;
     overflow: auto;

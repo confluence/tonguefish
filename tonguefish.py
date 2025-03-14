@@ -50,9 +50,11 @@ HEADER = Template("""
     $stylesheets
 </head>
 <body>
+<div id="filters">
 $agefilters
-<br/>
+<hr/>
 $catfilters
+</div>
 <div id="main">
 """)
 
@@ -88,11 +90,11 @@ FOOTER = """
 """
 
 FILTERCSSRULES = Template("""
-input#$id:checked~#main li:not(.$id) {
+#filters:has(#$id:checked)~#main li:not(.$id) {
     display: none;
 }
 
-input#$id:checked~#main div.feed:not(:has(li.$id)) {
+#filters:has(#$id:checked)~#main div.feed:not(:has(li.$id)) {
     display: none;
 }
 """)
