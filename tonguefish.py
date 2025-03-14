@@ -28,6 +28,7 @@ except ValueError:
     sys.exit("usage: tonguefish.py <inputdir> <outputdir> <cachedir> [NOUPDATE]")
 
 SEEN_CACHE = set()
+CONF_UPDATED = False
 
 CONF = os.path.join(INDIR, "feeds.toml")
 OUTFILE = os.path.join(OUTDIR, "index.html")
@@ -36,14 +37,8 @@ CSS = glob.glob(os.path.join(INDIR, "*.css"))
 NOUPDATE = len(sys.argv) > 4 and sys.argv[4] == "NOUPDATE"
 if NOUPDATE:
     print("NOUPDATE option is enabled. Will not check for updates or fetch missing feeds.")
-
-# TODO read these from the conf file!
-
-# TODO dynamic filters
-# TODO categories
-# TODO default filter view
-# TODO category and age filters should be independent (two rows)
-# TODO write out category and age filter CSS dynamically into separate files
+    
+# Whole page templates
 
 HEADER = Template("""
 <!doctype html>
@@ -51,31 +46,60 @@ HEADER = Template("""
 <head>
     <title>Tonguefish</title>
     <meta charset="UTF-8"/>
+    $refresh
     $stylesheets
 </head>
 <body>
-<input type="radio" id="all" name="filter" checked />
-<label for="all">All entries</label>
-<input type="radio" id="today" name="filter" />
-<label for="today">Today</label>
-<input type="radio" id="thisweek" name="filter" />
-<label for="thisweek">This week</label>
-<input type="radio" id="thismonth" name="filter" />
-<label for="thismonth">This month</label>
-<input type="radio" id="thisyear" name="filter" />
-<label for="thisyear">This year</label>
+$agefilters
+<br/>
+$catfilters
 <div id="main">
+""")
+
+REFRESH = Template("""
+<meta http-equiv="refresh" content="$interval">
 """)
 
 STYLESHEET = Template("""
 <link rel="stylesheet" href="$stylesheet"/>
 """)
 
+FILTER = Template("""
+<input type="radio" id="$id" name="$name" $checked />
+<label for="$id">$label</label>
+""")
+
+AGES = (
+    {"name": "agefilter", "id": "allages", "label": "All ages", "checked": "checked"},
+    {"name": "agefilter", "id": "today", "label": "Today", "checked": ""},
+    {"name": "agefilter", "id": "thisweek", "label": "This week", "checked": ""},
+    {"name": "agefilter", "id": "thismonth", "label": "This month", "checked": ""},
+    {"name": "agefilter", "id": "thisyear", "label": "This year", "checked": ""},
+)
+
+AGEFILTERIDS = (a["id"] for a in AGES)
+
+AGEFILTERS = "\n".join(FILTER.safe_substitute(a) for a in AGES)
+
 FOOTER = """
 </div>
 </body>
 </html>
 """
+
+FILTERCSSRULES = Template("""
+input#$id:checked~#main li:not(.$id) {
+    display: none;
+}
+
+input#$id:checked~#main div.feed:not(:has(li.$id)) {
+    display: none;
+}
+""")
+
+FILTERCSSFILE = os.path.join(OUTDIR, "tonguefilter.css")
+
+# Per-feed templates
 
 FEEDHEADER = Template("""
 <div class="feed">
@@ -87,6 +111,8 @@ FEEDFOOTER = """
 </ul>
 </div>
 """
+
+# Entry templates
 
 ENTRY = Template("""
 <li class="$classes">
@@ -144,8 +170,10 @@ def update_feed(cache_url, feed_conf, old_feed_obj=None):
     elif feed_obj.status == 301:
         old_url = feed_conf["url"]
         print(f"{old_url} has redirected permanently to {feed_obj.href} -- updating config.")
+        # = = MODIFYING CONFIG = = #
         feed_conf["url"] = feed_obj.href
         feed_conf["url"].comment(f"# Updated automatically from {old_url}")
+        CONF_UPDATED = True
         SEEN_CACHE.remove(cache_url)
         cache_url = get_cache_url(feed_conf["url"])
         SEEN_CACHE.add(cache_url)
@@ -155,9 +183,11 @@ def update_feed(cache_url, feed_conf, old_feed_obj=None):
     elif feed_obj.status == 410:
         old_url = feed_conf["url"]
         print(f"{old_url} is gone -- updating config.")
+        # = = MODIFYING CONFIG = = #
         feed_conf["url_disabled"] = old_url
         feed_conf["url_disabled"].comment("# This feed is gone and should be removed.")
         del feed_conf["url"]
+        CONF_UPDATED = True
         raise ValueError("Server returned 410 response (feed is gone).")
     
     else:
@@ -193,23 +223,44 @@ class FakeObj:
         return getattr(self, name, default)
 
 
-def get_digest(feed_obj, ignore, ignore_source):
+def get_digest(feed_conf, feed_obj):
+    digest_conf = feed_conf["digest"]
+    interval = digest_conf.get("interval")
+    
+    if interval not in ["day", "month"]:
+        print(f"Invalid digest interval: {interval}. Not digesting.")
+        return feed_conf, feed_obj
+    
     fake_obj = FakeObj()
     fake_obj.feed = FakeObj()
     fake_obj.feed.title = feed_obj.feed.title
     fake_obj.entries = []
     
+    # Note: this is not a deep copy; original conf children included in fake conf
+    fake_conf = dict(feed_conf)
+    
+    # Ignore before grouping
+    ignore = None
+    if "ignore" in feed_conf:
+        ignore = re.compile(feed_conf["ignore"]["find"])
+        ignore_source = feed_conf["ignore"]["source"]
+        del fake_conf["ignore"] # Don't repeat ignore in the main loop
+    
+    # Group entries by interval
     digest_entries = defaultdict(list)
-    
-    dc = feed_conf["digest"]
-    
     for e in feed_obj.entries:
         if ignore and ignore.search(e.get(ignore_source)):
             continue
-        
         dt = e.get("published_parsed", e.get("updated_parsed", None))
-        digest_entries[(dt.tm_year, dt.tm_yday)].append(e)
+        
+        if interval == "day":
+            key = (dt.tm_year, dt.tm_yday)
+        elif interval == "month":
+            key = (dt.tm_year, dt.tm_mon)
+        
+        digest_entries[key].append(e)
     
+    # Process grouped entries into digest entries
     for _, entries in sorted(digest_entries.items(), reverse=True):
         dates = [e.published_parsed for e in entries]
         titles = [e.title for e in entries]
@@ -219,28 +270,38 @@ def get_digest(feed_obj, ignore, ignore_source):
         fake_e = FakeObj()
         fake_e.published_parsed = [sum(l)//len(l) for l in zip(*dates)]
         fake_e.description = "\n".join(f'<h1><a href="{l}">{t}</a></h1>\n{d}' for t, l, d in zip(titles, links, descriptions))
+                
+        # Try to generate title and link
+        if "id_find" in digest_conf and "id_source" in digest_conf:
+            sources = {
+                "link": links,
+                "title": titles,
+                "description": descriptions,
+            }
+            
+            id_find = re.compile(digest_conf["id_find"])
+            
+            for s in sources[digest_conf["id_source"]]:
+                m = id_find.search(s)
+                if m:
+                    fake_e.link = m.expand(digest_conf["link"])
+                    fake_e.title = m.expand(digest_conf["title"])
+                    break
+            else:
+                # Ignore partial digests unless partial is set to 1
+                if not digest_conf.get("partial", False):
+                    continue
         
-        # TODO: handle default digest name title and link with no special parsing (day and main feed link)
+        # Fall back to default link and/or title -- use the first real entry
+        if not fake_e.get("title"):
+            fake_e.title = f"{titles[0]}..."
         
-        sources = {
-            "link": links,
-            "title": titles,
-            "description": descriptions,
-        }
+        if not fake_e.get("link"):
+            fake_e.link = links[0]
         
-        id_find = re.compile(dc["id_find"])
+        fake_obj.entries.append(fake_e)
         
-        for s in sources[dc["id_source"]]:
-            m = id_find.search(s)
-            if m:
-                fake_e.link = m.expand(dc["link"])
-                fake_e.title = m.expand(dc["title"])
-                break
-        
-        if fake_e.get("link"):
-            fake_obj.entries.append(fake_e)
-        
-    return fake_obj;
+    return fake_conf, fake_obj;
 
 
 def get_group(name, feeds):
@@ -252,11 +313,14 @@ def get_group(name, feeds):
     
     fake_obj = FakeObj()
     fake_obj.feed = FakeObj()
-    fake_obj.feed.title = name.title()
+    fake_obj.feed.title = name.capitalize()
     fake_obj.entries = sorted(chain.from_iterable(f.entries for f in feed_objs), key=lambda e: e.get("published_parsed", e.get("updated_parsed")), reverse=True)
     
-    fake_conf = dict(ChainMap(*(f["group"] for f in feed_confs)))
-    fake_conf["group_obj"] = fake_obj
+    # Note: this is not a deep copy; original conf children included in fake conf
+    fake_conf = dict(ChainMap(*feed_confs))
+    del fake_conf["url"] # The grouped feed has no url
+    del fake_conf["group"] # The grouped feed is not itself in the group
+    fake_conf["group_obj"] = fake_obj # Use the ready-made obj instead
     
     return fake_conf
 
@@ -265,69 +329,147 @@ def get_group(name, feeds):
 ## MAIN                                                                      ##
 ###############################################################################
 
-
+# Read config file
 with open(CONF) as f:
     conf = tomlkit.parse(f.read())
 
-
+# Copy input stylesheets
 for stylesheet in CSS:
     try:
         shutil.copy(stylesheet, OUTDIR)
     except shutil.SameFileError:
         pass # File is the same
 
-stylesheets = "\n".join(STYLESHEET.safe_substitute(stylesheet=os.path.basename(s)) for s in CSS)
-header = HEADER.safe_substitute(stylesheets=stylesheets)
+# Refresh interval
+refresh_interval = conf.get("refresh_interval", 0)
+if refresh_interval:
+    refresh = REFRESH.safe_substitute(interval=refresh_interval)
+else:
+    refresh = ""
+
+# Collect categories
+catids = set()
+
+# Characters to remove from category names
+CATIDREMOVE = re.compile("^[^a-zA-Z_]*|[^a-zA-Z_0-9]")
+
+# Find category names and normalise in config (must be allowed class names)
+for feed in conf["feeds"]:
+    if "category" in feed:
+        catid = oldcatid = feed["category"]
+        catid = catid.replace(" ", "_")
+        catid = CATIDREMOVE.sub("", catid)
+        catids.add(catid)
+        if catid != oldcatid:
+            print(f"Invalid category name {oldcatid}. Correcting to {catid}.")
+            # = = MODIFYING CONFIG = = #
+            feed["category"] = catid
+            feed["category"].comment(f"# automatically corrected from '{oldcatid}'")
+            CONF_UPDATED = True
+
+# Category inputs
+categories = [
+    {"name": "catfilter", "id": "allcats", "label": "All categories", "checked": "checked"},
+]
+
+for catid in catids:
+    catlabel = catid.replace("_", " ").capitalize()
+    categories.append(
+        {"name": "catfilter", "id": catid, "label": catlabel, "checked": ""}
+    )
+
+# Generate category HTML
+catfilters = "\n".join(FILTER.safe_substitute(c) for c in categories)
+
+# Input options which unset filters (no CSS for these)
+showall = ("allages", "allcats")
+
+# Generate CSS rules for age and category filters
+generatedcss = "".join(FILTERCSSRULES.safe_substitute({"id": fi}) for fi in (*AGEFILTERIDS, *catids) if not fi in showall)
+
+# # # WRITE GENERATED CSS # # #
+with open(FILTERCSSFILE, "w") as f:
+    f.write(generatedcss)
+
+# Generate stylesheet links
+stylesheets = "\n".join(STYLESHEET.safe_substitute(stylesheet=os.path.basename(s)) for s in (*CSS, FILTERCSSFILE))
+
+# Generate page header
+header = HEADER.safe_substitute(refresh=refresh, stylesheets=stylesheets, agefilters=AGEFILTERS, catfilters=catfilters)
+
+# Use a single "now" for the whole run
 now = datetime.now(ZoneInfo(conf["timezone"]))
+# Group feeds will be appended to this
 all_feeds = conf["feeds"][:]
+# Feeds for groups will be aggregated here
 groups = defaultdict(list)
 
 # Process the feeds
 with open(OUTFILE, "w") as out:
+     # # # WRITE PAGE HEADER # # #
     out.write(header)
     
+    # Process feeds (generated groups will be appended to normal feeds inside the loop)
     for i, feed_conf in enumerate(all_feeds, 1):
         if "group_obj" in feed_conf:
+            # Handle appended group, which will have a constructed object
             feed_obj = feed_conf["group_obj"]
         else:
+            # Normal feed; try to get it
             try:
                 feed_obj = get_feed_obj(feed_conf)
             except ValueError as e:
                 print(f"Error at feed {i}: {e}")
                 continue
         
+        # Add grouped feeds to group dict, to be processed at the end
+        if "group" in feed_conf:
+            groups[feed_conf["group"]].append((feed_conf, feed_obj))
+        
+        # If this is the last feed in the config, create and append groups (before exiting loop)
+        if i == len(conf["feeds"]):
+            all_feeds.extend(get_group(n, fs) for n, fs in groups.items())
+        
+        # Then proceed to skip over the feed if it's grouped
+        if "group" in feed_conf:
+            continue
+        
+        # Then process digest
+        if "digest" in feed_conf:
+            feed_conf, feed_obj = get_digest(feed_conf, feed_obj)
+            
+        # Then create ignore filter
         ignore = None
         if "ignore" in feed_conf:
             ignore = re.compile(feed_conf["ignore"]["find"])
             ignore_source = feed_conf["ignore"]["source"]
-                
-        if "group" in feed_conf:
-            groups[feed_conf["group"]["name"]].append((feed_conf, feed_obj))
-            if i == len(conf["feeds"]):
-                all_feeds.extend(get_group(n, fs) for n, fs in groups.items())
-            continue
         
-        if "digest" in feed_conf:
-            feed_obj = get_digest(feed_obj, ignore, ignore_source)
-            ignore = None # Ignore is applied once only to the original items
-        
+        # Feed title
         feedtitle = feed_conf.get("title") or feed_obj.feed.title
+        
+        # # # WRITE FEED HEADER # # #
         out.write(FEEDHEADER.safe_substitute(feedtitle=feedtitle))
         
+        # Per-feed limits
         max_num = feed_conf.get("max_entry_num", conf.get("max_entry_num", 0))
         max_age = feed_conf.get("max_entry_age", conf.get("max_entry_age", 0))
         num_entries = 0
         
+        # Default feed classes
         entry_classes = ["entry"]
         category = feed_conf.get("category")
         if category:
             entry_classes.append(category)
         
+        # Process entries
         for e in feed_obj.entries:
             if ignore and ignore.search(e.get(ignore_source)):
+                # Skip ignored
                 continue
             
+            # Add classes for age filters
             classes = entry_classes[:]
+            
             date_tuple = e.get("published_parsed", e.get("updated_parsed"))
             date_obj = datetime.fromtimestamp(calendar.timegm(date_tuple), timezone.utc)
             age = now - date_obj
@@ -353,19 +495,20 @@ with open(OUTFILE, "w") as out:
             
             classes_str = " ".join(classes)
             
+            # Don't load images for hidden elements
             description = e.description.replace("<img ", "<img loading='lazy' ") # TODO parse this more nicely?
             
+            # # # WRITE ENTRY # # #
             out.write(ENTRY.safe_substitute(classes=classes_str, date=date_str, link=e.link, title=e.title, blurb=description, feedtitle=feedtitle))
             
             num_entries += 1
             if max_num and num_entries >= max_num:
                 break;
         
+        # # # WRITE FEED FOOTER # # #
         out.write(FEEDFOOTER)
-        
-        if i == len(conf["feeds"]):
-            all_feeds.extend(get_group(n, fs) for n, fs in groups.items())
     
+    # # # WRITE PAGE FOOTER # # #
     out.write(FOOTER)
 
 
@@ -376,5 +519,6 @@ for cache_url in glob.glob(os.path.join(CACHEDIR, "*")):
 
 
 # Write out the config, which may have been modified
-with open(CONF, "w") as f:
-    f.write(tomlkit.dumps(conf))
+if CONF_UPDATED:
+    with open(CONF, "w") as f:
+        f.write(tomlkit.dumps(conf))
