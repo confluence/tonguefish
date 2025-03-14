@@ -219,4 +219,11 @@ A log can be useful for debugging, but if you don't want to log output, replace 
 
 ### Set up page refresh
 
-Add a top-level `refresh`
+You can configure a refresh interval in seconds at the top level of `feeds.toml`.
+
+```toml
+# How often to refresh the page (0 to disable; this does NOT update the feeds; you have to conigure that elsewhere)
+refresh_interval = 600 # seconds
+```
+
+Technically you don't need to refresh more frequently than the feed update interval, but since it's difficult to align these events perfectly, I recommend refreshing a couple of times per update to make sure that you pick up changes within a reasonable time frame.
