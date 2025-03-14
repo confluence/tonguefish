@@ -335,6 +335,10 @@ def get_group(name, feeds):
 # Read config file
 with open(CONF) as f:
     conf = tomlkit.parse(f.read())
+    
+# Use a single "now" for the whole run
+now = datetime.now(ZoneInfo(conf["timezone"]))
+print("Running tonguefish at", now.strftime("%a %d %b %Y, %H:%M"))
 
 # Copy input stylesheets
 for stylesheet in CSS:
@@ -400,8 +404,6 @@ stylesheets = "\n".join(STYLESHEET.safe_substitute(stylesheet=os.path.basename(s
 # Generate page header
 header = HEADER.safe_substitute(refresh=refresh, stylesheets=stylesheets, agefilters=AGEFILTERS, catfilters=catfilters)
 
-# Use a single "now" for the whole run
-now = datetime.now(ZoneInfo(conf["timezone"]))
 # Group feeds will be appended to this
 all_feeds = conf["feeds"][:]
 # Feeds for groups will be aggregated here
