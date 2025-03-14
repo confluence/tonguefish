@@ -150,7 +150,7 @@ Because the page doesn't use any JavaScript, you can use it without a webserver,
 
 ### Install
 
-These are example instructions for Linux (a recent Ubuntu LTS release). `tonguefish` has not been tested on other operating systems; it probably works anywhere you can install Python 3.
+These are example instructions for Linux (a recent Ubuntu LTS release). `tonguefish` has not been tested on other operating systems; it probably works anywhere you can install Python 3. On Windows you will definitely also need the `tzdata` package to provide the IANA timezone database.
 
 You should probably do this inside a virtualenv instead of using `sudo`; do as I say, not as I do.
 
