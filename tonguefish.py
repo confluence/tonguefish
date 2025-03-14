@@ -242,17 +242,20 @@ def get_digest(feed_conf, feed_obj):
     fake_conf = dict(feed_conf)
     
     # Ignore before grouping
-    ignore = None
-    if "ignore" in feed_conf:
-        ignore = re.compile(feed_conf["ignore"]["find"])
-        ignore_source = feed_conf["ignore"]["source"]
-        del fake_conf["ignore"] # Don't repeat ignore in the main loop
+    ignore = []
+    for field, regex in feed_conf.get("ignore", {}).items():
+        ignore.append((field, re.compile(regex)))
+    # Don't repeat ignore in the main loop
+    if ignore:
+        del fake_conf["ignore"]
     
     # Group entries by interval
     digest_entries = defaultdict(list)
     for e in feed_obj.entries:
-        if ignore and ignore.search(e.get(ignore_source)):
+        # Skip ignored
+        if any(r.search(e.get(f, "")) for f, r in ignore):
             continue
+        
         dt = e.get("published_parsed", e.get("updated_parsed", None))
         
         if interval == "day":
@@ -314,7 +317,7 @@ def get_group(name, feeds):
     
     for f in feed_objs:
         for e in f.entries:
-            e.title = f"{f.feed.title}: {e.title}"
+            e["title"] = f"{f.feed.title}: {e.title}"
     
     fake_obj = FakeObj()
     fake_obj.feed = FakeObj()
@@ -337,6 +340,10 @@ def get_group(name, feeds):
 # Read config file
 with open(CONF) as f:
     conf = tomlkit.parse(f.read())
+
+# Bail early if no feeds configured
+if not "feeds" in conf:
+    sys.exit("No feeds configured. Nothing to do.")
     
 # Use a single "now" for the whole run
 now = datetime.now(ZoneInfo(conf["timezone"]))
@@ -358,30 +365,43 @@ else:
 
 # Collect categories
 catids = set()
+# Don't register grouped feeds with no category as uncategorised unless no feeds in the group have a category
+group_has_category = defaultdict(bool)
 
 # Characters to remove from category names
 CATIDREMOVE = re.compile("^[^a-zA-Z_]*|[^a-zA-Z_0-9]")
 
 # Find category names and normalise in config (must be allowed class names)
-for feed in conf["feeds"]:
-    if "category" in feed:
-        catid = oldcatid = feed["category"]
+for feed_conf in conf["feeds"]:
+    group = feed_conf.get("group")
+    catid = feed_conf.get("category")
+    
+    if group:
+        group_has_category[group] |= bool(catid)
+    
+    if catid:
+        oldcatid = catid
         catid = catid.replace(" ", "_")
         catid = CATIDREMOVE.sub("", catid)
         catids.add(catid)
         if catid != oldcatid:
             print(f"Invalid category name {oldcatid}. Correcting to {catid}.")
             # = = MODIFYING CONFIG = = #
-            feed["category"] = catid
-            feed["category"].comment(f"# automatically corrected from '{oldcatid}'")
+            feed_conf["category"] = catid
+            feed_conf["category"].comment(f"# automatically corrected from '{oldcatid}'")
             CONF_UPDATED = True
+    elif not group:
+        catids.add("uncategorised")
+        
+if not all(group_has_category.values()):
+    catids.add("uncategorised")
 
 # Category inputs
 categories = [
     {"name": "catfilter", "id": "allcats", "label": "All categories", "checked": "checked"},
 ]
 
-for catid in catids:
+for catid in sorted(catids):
     catlabel = catid.replace("_", " ").capitalize()
     categories.append(
         {"name": "catfilter", "id": catid, "label": catlabel, "checked": ""}
@@ -446,10 +466,9 @@ with open(OUTFILE, "w") as out:
             feed_conf, feed_obj = get_digest(feed_conf, feed_obj)
             
         # Then create ignore filter
-        ignore = None
-        if "ignore" in feed_conf:
-            ignore = re.compile(feed_conf["ignore"]["find"])
-            ignore_source = feed_conf["ignore"]["source"]
+        ignore = []
+        for field, regex in feed_conf.get("ignore", {}).items():
+            ignore.append((field, re.compile(regex)))
         
         # Feed title
         feedtitle = feed_conf.get("title") or feed_obj.feed.title
@@ -463,15 +482,12 @@ with open(OUTFILE, "w") as out:
         num_entries = 0
         
         # Default feed classes
-        entry_classes = ["entry"]
-        category = feed_conf.get("category")
-        if category:
-            entry_classes.append(category)
+        entry_classes = ["entry", feed_conf.get("category", "uncategorised")]
         
         # Process entries
         for e in feed_obj.entries:
-            if ignore and ignore.search(e.get(ignore_source)):
-                # Skip ignored
+            # Skip ignored
+            if any(r.search(e.get(f, "")) for f, r in ignore):
                 continue
             
             # Add classes for age filters
