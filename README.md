@@ -4,7 +4,7 @@ Yet another static RSS and Atom feed aggregator
 
 ## What's this?
 
-This is a static generator which produces an extremely compact bird's-eye view of all your feeds on a single webpage. 
+This is a static generator which produces an extremely compact bird's-eye view of all your feeds on a single webpage. I hacked this together in a couple of days, and it's very alpha, but it's usable (at least by me).
 
 ## That sounds like a lot of stuff on one page.
 
@@ -140,8 +140,6 @@ group = "example"
 
 `tonguefish` needs Python 3, `feedparser` and `tomlkit`.
 
-*Known issue: if the Python bindings for `libxml2` are installed, `feedparser` uses a more strict parser which chokes on feeds with missing namespace declarations. I will try to fix this by rewriting the feeds before parsing.*
-
 You need an input directory, an output directory, and a cache directory. The input directory must contain at minimum a `feeds.toml` file and a copy of or symbolic link to the `tonguefish.css` stylesheet. Custom CSS can be placed in separate files in the input directory; they will be copied to the output directory. The `tonguefish.py` script is standalone, and can be run from / moved to any working directory.
 
 `feeds.toml` must have a timezone configured.
@@ -227,3 +225,8 @@ refresh_interval = 600 # seconds
 ```
 
 Technically you don't need to refresh more frequently than the feed update interval, but since it's difficult to align these events perfectly, I recommend refreshing a couple of times per update to make sure that you pick up changes within a reasonable time frame.
+
+## Known issues
+
+* There's no ordering of feeds. The order in the configuration is preserved, except that group feeds are added at the end.
+* If the Python bindings for `libxml2` are installed, `feedparser` uses a more strict parser which chokes on feeds with missing namespace declarations. I could try to fix this by rewriting the feeds before parsing, but it's going to be annoying. In the meantime, a workaround is to automate downloading the feed to a local file and fixing the namespace, and use the local file path in the config instead.
