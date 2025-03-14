@@ -262,6 +262,9 @@ def get_digest(feed_conf, feed_obj):
     
     # Process grouped entries into digest entries
     for _, entries in sorted(digest_entries.items(), reverse=True):
+        # Oldest first within each digest
+        entries.reverse()
+        
         dates = [e.published_parsed for e in entries]
         titles = [e.title for e in entries]
         links = [e.link for e in entries]
