@@ -138,7 +138,7 @@ group = "example"
 
 ### Prerequisites
 
-`tonguefish` needs Python 3, `feedparser` and `tomlkit`.
+`tonguefish` needs Python 3, `feedparser` and `tomlkit`. On Windows you will also need the `tzdata` package if you want to use an IANA string to configure a local timezone.
 
 You need an input directory, an output directory, and a cache directory. The input directory must contain at minimum a `feeds.toml` file and a copy of or symbolic link to the `tonguefish.css` stylesheet. Custom CSS can be placed in separate files in the input directory; they will be copied to the output directory. The `tonguefish.py` script is standalone, and can be run from / moved to any working directory.
 
@@ -148,7 +148,7 @@ Because the page doesn't use any JavaScript, you can use it without a webserver,
 
 ### Install
 
-These are example instructions for Linux (a recent Ubuntu LTS release). `tonguefish` has not been tested on other operating systems; it probably works anywhere you can install Python 3. On Windows you will also need the `tzdata` package if you want to use an IANA string to configure a local timezone.
+These are example instructions for Linux (a recent Ubuntu LTS release). `tonguefish` has not been tested on other operating systems; it probably works anywhere you can install Python 3.
 
 You should probably do this inside a virtualenv instead of using `sudo`; do as I say, not as I do.
 
