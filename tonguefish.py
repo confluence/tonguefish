@@ -176,7 +176,8 @@ def update_feed(cache_url, feed_conf, old_feed_obj=None):
         feed_conf["url"] = feed_obj.href
         feed_conf["url"].comment(f"# Updated automatically from {old_url}")
         CONF_UPDATED = True
-        SEEN_CACHE.remove(cache_url)
+        if cache_url in SEEN_CACHE:
+            SEEN_CACHE.remove(cache_url)
         cache_url = get_cache_url(feed_conf["url"])
         SEEN_CACHE.add(cache_url)
         dump_feed_obj(feed_obj, cache_url)
