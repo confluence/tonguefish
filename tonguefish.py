@@ -131,6 +131,14 @@ ENTRY = Template("""
 ###############################################################################
 ## FUNCTIONS & CLASSES                                                       ##
 ###############################################################################
+def get_timezone(conf):
+    if "timezone" in conf:
+        # IANA string (preferred)
+        return ZoneInfo(conf["timezone"])
+    if "tzoffset" in conf:
+        # Fixed hour offset
+        return timezone(timedelta(hours=conf["tzoffset"]))
+    return None
 
 def dump_feed_obj(feed_obj, cache_url):
     # We have to do this to stop pickle from blowing up because SAXParseException contains a closed file-like object
@@ -150,6 +158,7 @@ def get_cache_url(url):
 
 
 def update_feed(cache_url, feed_conf, old_feed_obj=None):
+    global CONF_UPDATED
     url = feed_conf["url"]
     
     if old_feed_obj:
@@ -347,12 +356,9 @@ if not "feeds" in conf:
     sys.exit("No feeds configured. Nothing to do.")
     
 # Use a single "now" for the whole run
-if "timezone" in conf:
-    # IANA string
-    now = datetime.now(ZoneInfo(conf["timezone"]))
-elif "tzoffset" in conf:
-    # hour offset
-    now = datetime.now(timezone(timedelta(hours=conf["tzoffset"])))
+localtz = get_timezone(conf)
+if localtz:
+    now = datetime.now(localtz)
 else:
     # use system time
     now = datetime.now().astimezone()
@@ -503,9 +509,29 @@ with open(OUTFILE, "w") as out:
             # Add classes for age filters
             classes = entry_classes[:]
             
+            # Process entry publication date
+            feed_tz = get_timezone(feed_conf) or timezone.utc
             date_tuple = e.get("published_parsed", e.get("updated_parsed"))
-            # Naive tuple in UTC -> aware datetime in UTC -> aware datetime in localtime
-            date_obj = datetime.fromtimestamp(calendar.timegm(date_tuple), timezone.utc).astimezone(now.tzinfo)
+            
+            if date_tuple:
+                 # Naive tuple in UTC (or custom feed tz) -> aware datetime in UTC (or custom feed tz) -> aware datetime in localtime
+                date_obj = datetime.fromtimestamp(calendar.timegm(date_tuple), feed_tz).astimezone(now.tzinfo)
+            else:
+                date_raw = e.get("published", e.get("updated"))
+                custom_format = feed_conf.get("date_format")
+                
+                if date_raw and custom_format:
+                    # Try custom format
+                    try:
+                        date_obj = datetime.strptime(date_raw, custom_format).astimezone(now.tzinfo)
+                    except ValueError:
+                        pass # TODO Log a debug message here once proper logging added
+                
+                if not date_obj:
+                    # Fall back to time of feed fetch (bad, but what can you do?)
+                    date_obj = now
+                     # TODO Log a debug message here once proper logging added
+            
             age = now - date_obj
             
             if max_age and age.days > max_age:
@@ -555,5 +581,6 @@ for cache_url in glob.glob(os.path.join(CACHEDIR, "*")):
 
 # Write out the config, which may have been modified
 if CONF_UPDATED:
+    print("Writing out config, which has been modified.")
     with open(CONF, "w") as f:
         f.write(tomlkit.dumps(conf))
