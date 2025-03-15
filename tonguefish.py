@@ -333,7 +333,7 @@ class Feed(TimeZoneMixIn):
         else:
             # Fall back to time of feed fetch (bad, but what can you do?)
             date_obj = now
-            logger.warning("Falling back to now as publicatio date in feed %s.", self.feed_id)
+            logger.warning("Falling back to now as publication date in feed %s.", self.feed_id)
         
         age = now - date_obj
         
@@ -656,14 +656,12 @@ $cat_filters
         oldcatid = self.conf.get("category")
         if oldcatid:
             catid = CATIDREMOVE.sub("", oldcatid.replace(" ", "_"))
-            catids.add(catid)
             if catid != oldcatid:
                 logger.warning("Invalid default category name %s. Correcting to %s.", oldcatid, catid)
                 self.conf.rename_default_category(oldcatid, catid)
         
         for oldcatid in self.conf.get("categories", {}).keys():
             catid = CATIDREMOVE.sub("", oldcatid.replace(" ", "_"))
-            catids.add(catid)
             if catid != oldcatid:
                 logger.warning("Invalid category name %s in categories. Correcting to %s.", oldcatid, catid)
                 self.conf.rename_category_key(oldcatid, catid)

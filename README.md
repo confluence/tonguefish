@@ -22,7 +22,7 @@ All the navigation is done with pure CSS (no JavaScript), so you can use this wi
 
 There is no state; links appear as visited or unvisited according to your browser history. This is imperfect for various reasons, but a core design principle: it's trivial to implement, and eliminates the inbox zero mentality (which I personally dislike) from feed browsing.
 
-Feeds are configured in a TOML file. Currently there is no tool for adding a feed from a URL, but I may write one.
+Feeds are configured in a [TOML](https://toml.io/en/) file. Currently there is no tool for adding a feed from a URL, or for importing feeds from an OPML file, but I may add this option to the script.
 
 The page can be configured to refresh periodically using a meta header. Updating the feeds has to be configured separately (for example with `cron`).
 
@@ -32,7 +32,7 @@ Parsed feed objects are pickled and saved in a cache. `tonguefish` attempts to u
 
 ## Basic feed configuration
 
-Feeds are listed in a TOML AoT (array of tables). Each table in the array must at minimum contain a URL. A feed can also have a category.
+Feeds are listed in a TOML AoT (array of tables). Each table in the array must at minimum contain a URL. A feed can also have exactly one category.
 
 ```toml
 [[feeds]]
@@ -40,13 +40,28 @@ url = "https://example.com/rss"
 category = "blog"
 ```
 
+Most feed options can be specified globally (at the top level), in the category section, or in a single feed (although some of these options may not make sense). A more specific option will take precedence over a more general one.
+
+```toml
+[categories.blog]
+max_entry_num = 20
+
+[categories.blog.digest]
+interval = "week"
+```
+
+Exceptions:
+1. `url` and `title` can only be set per feed.
+2. `timezone` and `tzoffset` are used to set your local time at the top level, a feed's local time at the feed level, and are ignored at the category level.
+3. You can't set a category at the category level. You can, however, set a default category at the top level (which will replace `uncategorised`).
+
 ## Transformations
 
-`tonguefish` can perform transformations on feeds to fix certain annoyances.
+`tonguefish` can perform transformations on feeds to fix certain annoyances. 
 
 ### Limits
 
-You can set limits on the maximum age of entries (in days) to be included, and/or the maximum number of entries to be included per feed. The top-level options can be overridden per feed. A value of `0` disables the option.
+You can set limits on the maximum age of entries (in days) to be included, and/or the maximum number of entries to be included per feed.
 
 ```toml
 # Set a global limit on the number of entries to include in each feed (0 to disable)
@@ -76,6 +91,19 @@ url = "https://example.com/rss"
 title = "Cool Example Feed"
 ```
 
+### Bad dates
+
+If a feed has publication dates in a format that `feedparser` doesn't recognise, you can specify your own format (to pass to `strptime`).
+
+If a feed had publication dates in its local time rather than UTC, you can specify the timezone (using the same formats as your local timezone at the top level; see below).
+
+```toml
+[[feeds]]
+url = "https://example.com/whatarestandards/rss"
+date_format = "%A %b %d %Y %H:%M:%S"
+timezone = "Africa/Johannesburg"
+```
+
 ### Ignore
 
 You can ignore entries that match certain patterns. Currently one regex is allowed per field (you can combine multiple regexes to apply to a single field with `|`).
@@ -91,7 +119,7 @@ description = 'gouda|cheddar|gorgonzola'
 
 ### Digest
 
-Multiple entries from one feed can be aggregated into daily or monthly digests. The intended use case is magazines which have no issue feed but post multiple entries for a single issue on one day, or over the course of a month, or webcomics which post a batch of updates at a time.
+Multiple entries from one feed can be aggregated into digests (hourly, daily, weekly, or monthly). The intended use case is magazines which have no issue feed but post multiple entries for a single issue on one day, or over the course of a month, or webcomics which post a batch of updates at a time. An hourly digest could be useful for a very busy feed.
 
 Ignore rules are applied before the digest aggregation. You can configure rules for extracting an identifier from a field in one of the component entries (entries will be checked until the first match is found) and using it to construct an aggregate link and title. If the oldest entry with this information falls off the end of the feed, the preceding entries which would be in the same digest will be discarded unless you set the `partial` property, which will cause them to be included with the fallback title and URL, which are copied from the first (oldest) item in the digest.
 
@@ -117,7 +145,7 @@ title = 'Issue \1'
 
 Entries from multiple feeds can be aggregated into a single feed. The intended use case is grouping individual account feeds from a website which does not offer a single feed for all your subscriptions.
 
-Additional custom properties (such as title, category, ignore or digest rules) that are defined on feeds in the same group are merged together and applied only to the final grouped feed. They should only be defined on a single feed in the group; merging multiple definitions is unsupported and can give unpredictable results.
+Additional custom properties (such as title, category, ignore or digest rules) that are defined on individual feeds in the same group are merged together and applied only to the final grouped feed. They should only be defined on a single feed in the group; merging multiple definitions is unsupported and can give unpredictable results.
 
 ```toml
 [[feeds]]
@@ -134,15 +162,24 @@ url = "https://example.com/news/rss"
 group = "example"
 ```
 
+### Hide
+
+You can prevent a feed from appearing in the main `All categories` view (you can still see it if you select the category it belongs to). It makes the most sense to do this for an entire category.
+
+```toml
+[categories.news]
+hide = 1
+```
+
 ## How to use
 
 ### Prerequisites
 
-`tonguefish` needs Python 3, `feedparser` and `tomlkit`. On Windows you will also need the `tzdata` package if you want to use an IANA string to configure a local timezone.
+`tonguefish` needs Python 3, [`feedparser`](https://feedparser.readthedocs.io/en/latest/) and [`tomlkit`](https://tomlkit.readthedocs.io/en/latest/). On Windows you will also need the `tzdata` package if you want to use IANA strings to configure local timezones.
 
 You need an input directory, an output directory, and a cache directory. The input directory must contain at minimum a `feeds.toml` file and a copy of or symbolic link to the `tonguefish.css` stylesheet. Custom CSS can be placed in separate files in the input directory; they will be copied to the output directory. The `tonguefish.py` script is standalone, and can be run from / moved to any working directory.
 
-`tonguefish` can be run with feed updates disabled (useful for changing configuration of existing feeds, or development of `tonguefish` itself).
+`tonguefish` can be run with all downloads disabled (useful for changing configuration of existing feeds, or development of `tonguefish` itself), or with updates disabled but fetching of missing feeds enabled (useful for adding new feeds).
 
 Because the page doesn't use any JavaScript, you can use it without a webserver, just by opening the file in your browser. Because the browser syncs visited state for you, you can run a copy locally on each device (you only have to sync your `feeds.toml` and any custom CSS). You can also host it on a webserver if you want to, but that's outside the scope of these instructions.
 
@@ -191,8 +228,8 @@ Once your current feeds have been downloaded and cached, you can re-run `tonguef
 # Edit feeds.toml
 vim input/feeds.toml
 
-# Run tonguefish with updates disabled
-./tonguefish.py input output cache NOUPDATE
+# Run tonguefish with all downloads disabled
+./tonguefish.py --no-update --no-new input output cache
 ```
 
 ### Configure local time
@@ -222,7 +259,7 @@ Enter this line (substituting full paths as appropriate), and save the crontab:
 @hourly /path/to/tonguefish.py /path/to/input /path/to/output /path/to/cache >> /path/to/logfile 2>&1
 ```
 
-A log can be useful for debugging, but if you don't want to log output, replace `>> /path/to/logfile` with `> /dev/null`.
+A log can be useful for debugging, but if you don't want to log output, replace `>> /path/to/logfile` with `> /dev/null`. By default `tonguefish` will only print warnings and errors.
 
 ### Set up page refresh
 
@@ -234,6 +271,29 @@ refresh_interval = 600 # seconds
 ```
 
 Technically you don't need to refresh more frequently than the feed update interval, but since it's difficult to align these events perfectly, I recommend refreshing a couple of times per update to make sure that you pick up changes within a reasonable time frame.
+
+### Add a new feed
+
+Edit `feeds.toml` to add your new feed, and then run `tonguefish` with updates disabled and new feed fetching enabled.
+
+```shell
+# Edit feeds.toml
+vim input/feeds.toml
+
+# Run tonguefish with updates disabled
+./tonguefish.py --no-update input output cache
+```
+
+## Troubleshooting
+
+You can run `tonguefish` with increased verbosity to see more information.
+
+```shell
+# Show info messages
+./tonguefish.py -v input output cache
+# Show debug messages
+./tonguefish.py -vv input output cache
+```
 
 ## Known issues
 
