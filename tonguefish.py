@@ -79,7 +79,7 @@ AGES = (
     {"name": "agefilter", "id": "thisyear", "label": "This year", "checked": ""},
 )
 
-AGEFILTERIDS = (a["id"] for a in AGES)
+AGEFILTERIDS = set(a["id"] for a in AGES)
 
 AGEFILTERS = "\n".join(FILTER.safe_substitute(a) for a in AGES)
 
@@ -89,7 +89,7 @@ FOOTER = """
 </html>
 """
 
-FILTERCSSRULES = Template("""
+ENTRYFILTERCSSRULES = Template("""
 #filters:has(#$id:checked)~#main li:not(.$id) {
     display: none;
 }
@@ -99,12 +99,18 @@ FILTERCSSRULES = Template("""
 }
 """)
 
+FEEDFILTERCSSRULES = Template("""
+#filters:has(#$id:checked)~#main div.feed:not(.$id) {
+    display: none;
+}
+""")
+
 FILTERCSSFILE = os.path.join(OUTDIR, "tonguefilter.css")
 
 # Per-feed templates
 
 FEEDHEADER = Template("""
-<div class="feed">
+<div class="$classes">
 <h1 class="feedtitle">$feedtitle</h1>
 <ul>
 """)
@@ -426,15 +432,15 @@ for catid in sorted(catids):
 # Generate category HTML
 catfilters = "\n".join(FILTER.safe_substitute(c) for c in categories)
 
-# Input options which unset filters (no CSS for these)
-showall = ("allages", "allcats")
-
-# Generate CSS rules for age and category filters
-generatedcss = "".join(FILTERCSSRULES.safe_substitute({"id": fi}) for fi in (*AGEFILTERIDS, *catids) if not fi in showall)
+# Generate CSS rules for age and category filters (exclude default options)
+agefiltercssrules = "".join(ENTRYFILTERCSSRULES.safe_substitute({"id": fi}) for fi in (AGEFILTERIDS - {"allages"}))
+catfiltercssrules = "".join(FEEDFILTERCSSRULES.safe_substitute({"id": fi}) for fi in catids)
 
 # # # WRITE GENERATED CSS # # #
 with open(FILTERCSSFILE, "w") as f:
-    f.write(generatedcss)
+    print("Writing generated CSS for filter rules.")
+    f.write(agefiltercssrules)
+    f.write(catfiltercssrules)
 
 # Generate stylesheet links
 stylesheets = "\n".join(STYLESHEET.safe_substitute(stylesheet=os.path.basename(s)) for s in (*CSS, FILTERCSSFILE))
@@ -489,8 +495,13 @@ with open(OUTFILE, "w") as out:
         # Feed title
         feedtitle = feed_conf.get("title") or feed_obj.feed.title
         
+        # Feed classes
+        feed_classes = ["feed", feed_conf.get("category", "uncategorised")]
+        if "hide" in feed_conf:
+            feed_classes.append("hide")
+        
         # # # WRITE FEED HEADER # # #
-        out.write(FEEDHEADER.safe_substitute(feedtitle=feedtitle))
+        out.write(FEEDHEADER.safe_substitute(feedtitle=feedtitle, classes=" ".join(feed_classes)))
         
         # Per-feed limits
         max_num = feed_conf.get("max_entry_num", conf.get("max_entry_num", 0))
@@ -498,7 +509,7 @@ with open(OUTFILE, "w") as out:
         num_entries = 0
         
         # Default feed classes
-        entry_classes = ["entry", feed_conf.get("category", "uncategorised")]
+        entry_classes = ["entry"]
         
         # Process entries
         for e in feed_obj.entries:
