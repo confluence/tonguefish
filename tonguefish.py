@@ -18,6 +18,130 @@ from itertools import chain
 import tomlkit
 import feedparser
 
+class Cache:
+    def __init__(self, cache_dir):
+        self.cache_dir = cache_dir
+        self.seen = set()
+        
+    def get(self, feed_url):
+        pass
+    
+    def put(self, feed_url, feed_obj):
+        pass
+    
+    def clean(self):
+        pass
+
+
+class Feedparser:
+    def __init__(self, cache_dir):
+        self.cache - Cache(cache_dir)
+        
+    def get(self, feed_url):
+        pass
+
+
+class FeedConfig:
+    IGNORE_TOPLEVEL = {"feeds", "categories", "url", "title"}
+    IGNORE_CATEGORY = {"url", "title"}
+    
+    def __init__(self, config, feed_conf):
+        # Construct combined prefs from top-level, category and feed entries
+        # Beware: this is a shallow copy. This object should be considered read-only.
+        
+        # Apply top-level prefs first
+        self.combined = {k:v for (k, v) in config.conf if k not in IGNORE_TOPLEVEL}
+        
+        # Then category prefs
+        category = feed_conf.get("category", "uncategorised")
+        if config.categories and category in config.categories:
+            self.combined.update({k:v for (k, v) in config.categories if k not in IGNORE_CATEGORY})
+        
+        # Finally the per-feed prefs
+        self.combined.update(feed_conf)
+        
+        # Save references
+        self.config = config
+        self.original = feed_conf
+        
+    def get(self, key, default=None)
+        return self.combined.get(key, default)
+
+    def update_url(self, url):
+        old_url = self.original["url"]
+        self.original["url"] = url
+        self.original["url"].comment(f"# Updated automatically from {old_url}")
+        self.config.modified = True
+    
+    def disable_url(self):
+        old_url = self.original["url"]
+        self.original["url_disabled"] = old_url
+        self.original["url_disabled"].comment("# This feed is gone and should be removed.")
+        del self.original["url"]
+        self.config.modified = True
+
+
+class Config:
+    def __init__(self, input_dir):
+        self.location = os.path.join(input_dir, "feeds.toml")
+        with open(self.location) as f:
+            self.conf = tomlkit.parse(f.read())
+        self.categories = self.conf.get("categories")
+        self.feeds = [FeedConfig(feed_conf) for feed_conf in self.conf.get("feeds")]
+        self.modified = false
+                
+    def rename_category(self, old_name, new_name):
+        if self.categories and old_name in self.categories:
+            self
+    
+    def save(self):
+        pass
+
+
+class HTML:
+    def __init__(self, output_dir):
+        self.output_dir = output_dir
+
+
+class CSS:
+    def __init__(self, input_dir, output_dir):
+        self.input_dir = input_dir
+        self.output_dir = output_dir
+
+
+
+
+
+class Tonguefish:
+    def __init__(self, input_dir, output_dir, cache_dir):
+        #self.input_dir = input_dir
+        #self.output_dir = output_dir
+        #self.cache_dir = cache_dir
+        
+        self.conf = Config(input_dir)
+        self.parser = Feedparser(cache_dir)
+        self.html = HTML(output_dir)
+        self.css = CSS(input_dir, output_dir)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ###############################################################################
 ## CONSTANTS                                                                 ##
 ###############################################################################
