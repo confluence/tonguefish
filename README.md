@@ -122,7 +122,7 @@ timezone = "Africa/Johannesburg"
 
 ### Ignore
 
-You can ignore entries that match certain patterns. Currently one regex is allowed per field (you can combine multiple regexes to apply to a single field with `|`).
+You can ignore entries that match certain patterns. Currently one regex is allowed per field (you can combine multiple regexes to apply to a single field with `|`). Use `content` to search whatever field `tonguefish` decides to use as the content, and `link` to search whichever link `tonguefish` picks for the entry. Otherwise, any field that `feedparser` understands will be checked directly -- but it may not exist for certain feeds.
 
 ```toml
 [[feeds]]
@@ -130,7 +130,7 @@ url = "https://example.com/rss"
 
 [feeds.ignore]
 title = '[Ch]eese'
-description = 'gouda|cheddar|gorgonzola'
+content = 'gouda|cheddar|gorgonzola'
 ```
 
 ### Digest

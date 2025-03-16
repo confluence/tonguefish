@@ -301,7 +301,21 @@ class Feed(TimeZoneMixIn):
         return parser.get_feed_obj(self)
     
     def get_ignore(self):
-        return [(field, re.compile(regex)) for (field, regex) in self.conf.get("ignore", {}).items()]
+        rules = {field: re.compile(regex) for (field, regex) in self.conf.get("ignore", {}).items()}
+        linkrule = rules.pop("link", None)
+        contentrule = rules.pop("content", None)
+        
+        def ignore(e):
+            if linkrule and linkrule.search(self.get_entry_link(e)):
+                return True
+            if contentrule and contentrule.search(self.get_content(e)):
+                return True
+            for field, rule in rules.items():
+                if rule.search(getattr(e, field)):
+                    return True
+            return False
+            
+        return ignore
     
     def get_timetuple(self, entry):
         timetuple = entry.get("published_parsed", entry.get("updated_parsed"))
@@ -402,7 +416,7 @@ class Feed(TimeZoneMixIn):
         for i, e in enumerate(feed_obj.entries):
             try:
                 # Skip ignored
-                if any(r.search(e.get(f, "")) for f, r in ignore):
+                if ignore(e):
                     continue
                 
                 self.write_entry(e, out, now, title, feed_tz, max_age)
@@ -570,7 +584,7 @@ class Digest(Feed):
         digest_entries = defaultdict(list)
         for e in feed_obj.entries:
             # Skip ignored
-            if any(r.search(e.get(f, "")) for f, r in ignore):
+            if ignore(e):
                 continue
             
             dt = self.get_timetuple(e)
