@@ -16,12 +16,43 @@ from string import Template
 from zoneinfo import ZoneInfo
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict, ChainMap
+from collections.abc import MutableMapping
 from itertools import chain
 
 import tomlkit
 import feedparser
 
 logger = logging.getLogger("tonguefish")
+
+
+class FakeObj(MutableMapping):
+    def __init__(self):
+        super().__setattr__("_d", defaultdict(FakeObj))
+    
+    def __delitem__(self, key):
+        del self._d[key]
+        
+    def __getitem__(self, key):
+        return self._d[key]
+    
+    def __iter__(self):
+        return self._d.__iter__()
+    
+    def __len__(self):
+        return len(self._d)
+    
+    def __setitem__(self, key, value):
+        self._d[key] = value
+    
+    def __getattr__(self, name):
+        try:
+            return self._d[name]
+        except KeyError:
+            raise AttributeError(f"'FakeObj' object has no attribute '{name}'")
+    
+    def __setattr__(self, name, value):
+        self._d[name] = value
+
 
 class Cache:
     def __init__(self, cache_dir):
@@ -90,6 +121,12 @@ class Feedparser:
         elif old_feed_obj and feed_obj.status == 304:
             logger.info("%s: no update required.", url)
             return old_feed_obj
+        
+        elif feed_obj.status == 302:
+            new_url = feed_obj.href
+            logger.warning("%s has redirected temporarily to %s -- using new url; not editing config.", url, new_url)
+            self.cache.put(url, feed_obj)
+            return feed_obj
         
         elif feed_obj.status == 301:
             new_url = feed_obj.href
@@ -294,7 +331,14 @@ class Feed(TimeZoneMixIn):
                     return content_value
         
         return entry.get("description")
-                
+    
+    def get_entry_link(self, entry):
+        if "link" in entry:
+            return entry.link
+        if "links" in entry:
+            return entry.links[0].href
+        raise ValueError("Could not find link for entry.")
+    
     def fix_image(self, img_string):
         img_obj = ET.fromstring(img_string)
         
@@ -355,17 +399,23 @@ class Feed(TimeZoneMixIn):
         num_entries = 0
         
         # Process entries
-        for e in feed_obj.entries:
-            # Skip ignored
-            if any(r.search(e.get(f, "")) for f, r in ignore):
+        for i, e in enumerate(feed_obj.entries):
+            try:
+                # Skip ignored
+                if any(r.search(e.get(f, "")) for f, r in ignore):
+                    continue
+                
+                self.write_entry(e, out, now, title, feed_tz, max_age)
+                
+                # Stop if number limit exceeded
+                num_entries += 1
+                if max_num and num_entries > max_num:
+                    break;
+                
+            except (KeyError, AttributeError, ValueError) as err:
+                logger.warn("Couldn't parse entry %s: %s", i, err)
+                logger.debug("Entry keys: %r", " ".join(dict(e).keys()))
                 continue
-            
-            # Stop if number limit exceeded
-            num_entries += 1
-            if max_num and num_entries > max_num:
-                break;
-            
-            self.write_entry(e, out, now, title, feed_tz, max_age)
         
         # Write footer
         out.write(self.FEEDFOOTER)
@@ -417,12 +467,7 @@ class Feed(TimeZoneMixIn):
             content = content.replace(image, self.fix_image(image))
         
         # Write entry
-        out.write(self.ENTRY.safe_substitute(classes=classes_str, date=date_str, link=e.link, title=e.title, blurb=content, feedtitle=feedtitle))
-
-
-class FakeObj:
-    def get(self, name, default=None):
-        return getattr(self, name, default) 
+        out.write(self.ENTRY.safe_substitute(classes=classes_str, date=date_str, link=self.get_entry_link(e), title=e.title, blurb=content, feedtitle=feedtitle))
 
 
 class Group(Feed):
@@ -471,7 +516,7 @@ class Group(Feed):
             raise ValueError("No valid feed found in group %s.", self.feed_id)
         
         group_obj = FakeObj()
-        group_obj.feed = FakeObj()
+        #group_obj.feed = FakeObj()
         group_obj.feed.title = self.feed_id.capitalize()
         group_obj.entries = sorted(chain.from_iterable(f.entries for f in feed_objs), key=lambda e: self.get_timetuple(e), reverse=True)
         
@@ -512,7 +557,7 @@ class Digest(Feed):
         feed_obj = parser.get_feed_obj(self.feed)
         
         digest_obj = FakeObj()
-        digest_obj.feed = FakeObj()
+        #digest_obj.feed = FakeObj()
         digest_obj.feed.title = feed_obj.feed.title
         digest_obj.entries = []
         
@@ -559,7 +604,7 @@ class Digest(Feed):
             
             dates = [self.get_timetuple(e) for e in entries]
             titles = [e.title for e in entries]
-            links = [e.link for e in entries]
+            links = [self.get_entry_link(e) for e in entries]
             blurbs = [self.get_content(e) for e in entries]
             
             digest_e = FakeObj()
