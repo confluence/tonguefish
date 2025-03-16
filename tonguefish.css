@@ -43,16 +43,16 @@ h1 {
     font-weight: bold;
 }
 
-ul {
+div.feed > ul {
     margin: 0;
     padding: 0;
 }
 
-li {
+li.entry {
     display: inline;
 }
 
-li span {
+li.entry > span {
     font-weight: bold;
 }
 
@@ -80,7 +80,7 @@ a:hover {
     right: 0px;
     width: calc(34% - 20px);
     padding: 10px;
-    height: 100%;
+    height: calc(100% - 20px);
     overflow: auto;
 }
 
@@ -105,7 +105,7 @@ li:hover > .blurb {
 
 .blurb img {
     object-fit: contain;
-    max-width: 100%;
+    max-width: calc(100% - 22px);
 }
 
 .blurb h1 a:visited {

@@ -63,6 +63,8 @@ Exceptions:
 
 You can set limits on the maximum age of entries (in days) to be included, and/or the maximum number of entries to be included per feed.
 
+You can set the `full_content` option to include the full text content of each entry, rather than just the summary (by default it's unset). However, there is no consistency in the way that different feeds use these fields: some don't provide the full content, and some put the full content *in* the summary, so either way you will probably see a mixture of content lengths. The option may be more helpful as a per-feed setting. 
+
 ```toml
 # Set a global limit on the number of entries to include in each feed (0 to disable)
 max_entry_num = 10
@@ -70,13 +72,20 @@ max_entry_num = 10
 # Set a global limit on the age of entries to include in each feed (0 to disable)
 max_entry_age = 365 # days
 
+# Include full content of entries, if it's available
+full_content = 1
+
 [[feeds]]
 url = "https://example.com/rss"
 
 # Include more entries from this feed
 max_entry_num = 20
+
 # No age limit on entries from this feed
 max_entry_age = 0
+
+# Don't include the full content from this feed
+full_content = 0
 ```
 
 Limits are applied after groups, digests, and ignore rules (see below).
@@ -291,6 +300,7 @@ You can run `tonguefish` with increased verbosity to see more information.
 ```shell
 # Show info messages
 ./tonguefish.py -v input output cache
+
 # Show debug messages
 ./tonguefish.py -vv input output cache
 ```

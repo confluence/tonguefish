@@ -277,6 +277,21 @@ class Feed(TimeZoneMixIn):
                     
         return timetuple
     
+    def get_content(self, entry):
+        if self.conf.get("full_content", False):
+            content_list = entry.get("content", [])
+            
+            for content in content_list:
+                
+                content_value = content.get("value")
+                content_type = content.get("type")
+                
+                if content_type == "text/html" and content_value:
+                    return content_value
+        
+        return entry.get("description")
+                
+    
     def generate(self, parser, out, now):
         feed_obj = self.get_obj(parser)
         
@@ -360,10 +375,10 @@ class Feed(TimeZoneMixIn):
         classes_str = " ".join(classes)
         
         # Don't load images for hidden elements
-        description = e.description.replace("<img ", "<img loading='lazy' ") # TODO parse this more nicely?
+        content = self.get_content(e).replace("<img ", "<img loading='lazy' ") # TODO parse this more nicely?
         
         # Write entry
-        out.write(self.ENTRY.safe_substitute(classes=classes_str, date=date_str, link=e.link, title=e.title, blurb=description, feedtitle=feedtitle))
+        out.write(self.ENTRY.safe_substitute(classes=classes_str, date=date_str, link=e.link, title=e.title, blurb=content, feedtitle=feedtitle))
 
 
 class FakeObj:
@@ -506,18 +521,18 @@ class Digest(Feed):
             dates = [self.get_timetuple(e) for e in entries]
             titles = [e.title for e in entries]
             links = [e.link for e in entries]
-            descriptions = [e.description for e in entries]
+            blurbs = [self.get_content(e) for e in entries]
             
             digest_e = FakeObj()
             digest_e.published_parsed = [sum(l)//len(l) for l in zip(*dates)]
-            digest_e.description = "\n".join(f'<h1><a href="{l}">{t}</a></h1>\n{d}' for t, l, d in zip(titles, links, descriptions))
+            digest_e.description = "\n".join(f'<h1><a href="{l}">{t}</a></h1>\n{d}' for t, l, d in zip(titles, links, blurbs))
                     
             # Try to generate title and link
             if "id_find" in digest_conf and "id_source" in digest_conf:
                 sources = {
                     "link": links,
                     "title": titles,
-                    "description": descriptions,
+                    "content": blurbs,
                 }
                 
                 id_find = re.compile(digest_conf["id_find"])
