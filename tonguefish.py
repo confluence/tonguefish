@@ -10,6 +10,7 @@ import shutil
 import pickle
 import logging
 import argparse
+import xml.etree.ElementTree as ET
 
 from string import Template
 from zoneinfo import ZoneInfo
@@ -192,6 +193,9 @@ class Feed(TimeZoneMixIn):
     IGNORE_TOPLEVEL = {"feeds", "categories", "url", "title", "timezone", "tzoffset"}
     IGNORE_CATEGORY = {"url", "title", "category", "timezone", "tzoffset"}
     
+    IMAGE = re.compile("<img .*?/?>")
+    RESIZE_SRC = re.compile("(https?://.*?\?resize=)(\d+)(%2C)(\d+)(.*)")
+    
     @staticmethod
     def get_feeds(main_conf):
         feeds = []
@@ -291,7 +295,39 @@ class Feed(TimeZoneMixIn):
         
         return entry.get("description")
                 
-    
+    def fix_image(self, img_string):
+        img_obj = ET.fromstring(img_string)
+        
+        # Load images lazily
+        img_obj.set("loading", "lazy")
+        
+        width = int(img_obj.get("width", 0))
+        height = int(img_obj.get("height", 0))
+        
+        if width and height:
+            max_width = self.conf.get("max_img_width")
+            if max_width:
+                m = self.RESIZE_SRC.search(img_obj.get("src"))
+                if m:
+                    pre, w, sep, h, post = m.groups()
+                    w, h = int(w), int(h)
+                    if w > max_width:
+                        w, h = max_width, h * max_width // w
+                    # Fetch resized images from server
+                    img_obj.set("src", f"{pre}{w}{sep}{h}{post}")
+                    
+                    width, height = w, h
+                    img_obj.set("width", str(width))
+                    img_obj.set("height", str(height))
+            
+            aspect_ratio = height / width
+            
+            # Set aspect ratio (for correct CSS resizing later)
+            img_obj.set("style", f"--aspect-ratio: {aspect_ratio};")
+        
+        fixed_img_string = ET.tostring(img_obj, encoding="unicode")
+        return fixed_img_string
+        
     def generate(self, parser, out, now):
         feed_obj = self.get_obj(parser)
         
@@ -374,8 +410,11 @@ class Feed(TimeZoneMixIn):
         
         classes_str = " ".join(classes)
         
-        # Don't load images for hidden elements
-        content = self.get_content(e).replace("<img ", "<img loading='lazy' ") # TODO parse this more nicely?
+        # Apply image fixes
+        content = self.get_content(e)
+        images = self.IMAGE.findall(content)
+        for image in images:
+            content = content.replace(image, self.fix_image(image))
         
         # Write entry
         out.write(self.ENTRY.safe_substitute(classes=classes_str, date=date_str, link=e.link, title=e.title, blurb=content, feedtitle=feedtitle))

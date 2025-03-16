@@ -8,7 +8,7 @@ This is a static generator which produces an extremely compact bird's-eye view o
 
 ## That sounds like a lot of stuff on one page.
 
-Image links in item content are rewritten to load lazily, so that they are only fetched if you view the item. However, if you have lots of feeds or your feeds are very busy, you can configure limits on how many entries are included.
+Image links in item content are rewritten to load lazily, so that they are only fetched if you view the item, and `tonguefish` can request resized images from servers that offer them. However, if you have lots of feeds or your feeds are very busy, you can configure limits on how many entries are included. See below for details.
 
 ## Why's it called `tonguefish`?
 
@@ -63,7 +63,9 @@ Exceptions:
 
 You can set limits on the maximum age of entries (in days) to be included, and/or the maximum number of entries to be included per feed.
 
-You can set the `full_content` option to include the full text content of each entry, rather than just the summary (by default it's unset). However, there is no consistency in the way that different feeds use these fields: some don't provide the full content, and some put the full content *in* the summary, so either way you will probably see a mixture of content lengths. The option may be more helpful as a per-feed setting. 
+You can set the `full_content` option to include the full text content of each entry, rather than just the summary (by default it's unset). However, there is no consistency in the way that different feeds use these fields: some don't provide the full content, and some put the full content *in* the summary, so either way you will probably see a mixture of content lengths. The option may be more helpful as a per-feed setting.
+
+`tonguefish` recognises some image URLs as being rewritable to request a smaller image size from the server (currently only specific WordPress URLs). Set `max_img_width` to enable this (adjust the value to the typical pixel width of the feed preview area in your browser window).
 
 ```toml
 # Set a global limit on the number of entries to include in each feed (0 to disable)
@@ -74,6 +76,9 @@ max_entry_age = 365 # days
 
 # Include full content of entries, if it's available
 full_content = 1
+
+# Resize images to this width before fetching, if possible
+max_img_width = 500 # px
 
 [[feeds]]
 url = "https://example.com/rss"
