@@ -32,7 +32,7 @@ Parsed feed objects are pickled and saved in a cache. `tonguefish` attempts to u
 
 ## Basic feed configuration
 
-Feeds are listed in a TOML AoT (array of tables). Each table in the array must at minimum contain a URL. A feed can also have exactly one category.
+Feeds are listed in a TOML AoT (array of tables). Each table in the array must at minimum contain a URL. A feed can also have exactly one category. Please refer to the [TOML documentation](https://toml.io/en/latest) for an overview of the TOML syntax.
 
 ```toml
 [[feeds]]
