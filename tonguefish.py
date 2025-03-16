@@ -665,6 +665,7 @@ class Tonguefish:
     <meta charset="UTF-8"/>
     $refresh
     $stylesheets
+    $favicons
 </head>
 <body>
 <div id="filters">
@@ -683,6 +684,10 @@ $cat_filters
 <link rel="stylesheet" href="$stylesheet"/>
 """)
 
+    FAVICON = Template("""
+<link rel="icon" href="$favicon"/>
+""")
+
     FOOTER = """
 </div>
 </body>
@@ -695,6 +700,7 @@ $cat_filters
         
         self.conf_path = os.path.join(input_dir, "feeds.toml")
         self.stylesheet_paths = glob.glob(os.path.join(self.input_dir, "*.css"))
+        self.favicon_paths = glob.glob(os.path.join(self.input_dir, "favicon.*"))
         self.filter_path = os.path.join(output_dir, "tonguefilter.css")
         self.output_path = os.path.join(output_dir, "index.html")
         
@@ -750,10 +756,10 @@ $cat_filters
             now = datetime.now().astimezone()
         logger.info("Running tonguefish at %s", now.strftime("%a %d %b %Y, %H:%M"))
         
-        # Copy input stylesheets
-        for stylesheet in self.stylesheet_paths:
+        # Copy input stylesheets and favicons
+        for input_file in (*self.stylesheet_paths, *self.favicon_paths):
             try:
-                shutil.copy(stylesheet, self.output_dir)
+                shutil.copy(input_file, self.output_dir)
             except shutil.SameFileError:
                 pass # File is the same
         
@@ -768,9 +774,12 @@ $cat_filters
         
         # Generate stylesheet links
         stylesheets = "\n".join(self.STYLESHEET.safe_substitute(stylesheet=os.path.basename(s)) for s in (*self.stylesheet_paths, self.filter_path))
+        
+        # Generate favicon links
+        favicons = "\n".join(self.FAVICON.safe_substitute(favicon=os.path.basename(s)) for s in self.favicon_paths)
 
         # Generate page header
-        header = self.HEADER.safe_substitute(refresh=refresh, stylesheets=stylesheets, age_filters=filters.age_filters, cat_filters=filters.cat_filters)
+        header = self.HEADER.safe_substitute(refresh=refresh, stylesheets=stylesheets, favicons=favicons, age_filters=filters.age_filters, cat_filters=filters.cat_filters)
         
         with open(self.output_path, "w") as out:
             out.write(header)
@@ -783,9 +792,9 @@ $cat_filters
                     continue
                     
             out.write(self.FOOTER)
-            
+        
+        parser.cache.clean()
         self.conf.save(self.conf_path)
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog='tonguefish', description='A static RSS and Atom feed aggregator')

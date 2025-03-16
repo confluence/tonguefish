@@ -191,7 +191,7 @@ hide = 1
 
 `tonguefish` needs Python 3, [`feedparser`](https://feedparser.readthedocs.io/en/latest/) and [`tomlkit`](https://tomlkit.readthedocs.io/en/latest/). On Windows you will also need the `tzdata` package if you want to use IANA strings to configure local timezones.
 
-You need an input directory, an output directory, and a cache directory. The input directory must contain at minimum a `feeds.toml` file and a copy of or symbolic link to the `tonguefish.css` stylesheet. Custom CSS can be placed in separate files in the input directory; they will be copied to the output directory. The `tonguefish.py` script is standalone, and can be run from / moved to any working directory.
+You need an input directory, an output directory, and a cache directory. The input directory must contain at minimum a `feeds.toml` file and a copy of or symbolic link to the `tonguefish.css` stylesheet. Custom CSS can be placed in separate files in the input directory; they will be copied to the output directory. Any files called `favicon.*` (any suffix) in the input directory will be copied to the output directory and used as favicons. A default is provided (you have to copy or symlink it, like the default stylesheet).  The `tonguefish.py` script is standalone, and can be run from / moved to any working directory.
 
 `tonguefish` can be run with all downloads disabled (useful for changing configuration of existing feeds, or development of `tonguefish` itself), or with updates disabled but fetching of missing feeds enabled (useful for adding new feeds).
 
@@ -219,6 +219,7 @@ mkdir input output cache
 
 # Set up basic config
 ln -s ../tonguefish.css input
+ln -s ../favicon.svg input
 
 # Now edit feeds.toml to add your feeds
 vim input/feeds.toml
