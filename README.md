@@ -2,6 +2,8 @@
 
 Yet another static RSS and Atom feed aggregator
 
+![tonguefish screenshot](screenshot.png)
+
 ## What's this?
 
 This is a static generator which produces an extremely compact bird's-eye view of all your feeds on a single webpage. I hacked this together in a couple of days, and it's very alpha, but it's usable (at least by me).
