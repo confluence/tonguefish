@@ -314,3 +314,4 @@ You can run `tonguefish` with increased verbosity to see more information.
 
 * There's no ordering of feeds. The order in the configuration is preserved, except that group feeds are added at the end.
 * If the Python bindings for `libxml2` are installed, `feedparser` uses a more strict parser which chokes on feeds with missing namespace declarations. I could try to fix this by rewriting the feeds before parsing, but it's going to be annoying. In the meantime, a workaround is to automate downloading the feed to a local file and fixing the namespace, and use the local file path in the config instead.
+* The unpickled objects are not checked for correctness; something weird may happen if the version of Python and/or `feedparser` changes. I suggest clearing the cache between upgrades.
