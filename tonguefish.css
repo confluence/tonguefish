@@ -35,7 +35,7 @@ div.feed {
 }
 
 div.feed:not(:has(li)) {
-    diplay: none;
+    display: none;
 }
 
 #filters:has(#allcats:checked)~#main div.feed.hide {
