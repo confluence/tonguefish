@@ -25,7 +25,6 @@ body {
 #main {
     width: calc(66vw - 20px);
     column-count: 4;
-    height: 100vh;
     overflow: scroll;
     margin: 0;
     padding: 10px;
