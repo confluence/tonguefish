@@ -315,6 +315,9 @@ You can run `tonguefish` with increased verbosity to see more information.
 
 ## Known issues
 
+* If you interrupt `tonguefish` in the middle of writing a cache file, the next time it will load the partial file and probably crash when it can't find something. I will fix this by using a temporary download location.
+* If the page refreshes while `tonguefish` is working, or after it has crashed, you will see a partial page. I will fix this by using a temporary output directory and only replacing the existing output if generation completes successfully.
+* Extra files are not removed from the output directory (could cause problems with stylesheets or favicons). Will be fixed by the above fix.
 * There's no ordering of feeds. The order in the configuration is preserved, except that group feeds are added at the end.
 * If the Python bindings for `libxml2` are installed, `feedparser` uses a more strict parser which chokes on feeds with missing namespace declarations. I could try to fix this by rewriting the feeds before parsing, but it's going to be annoying. In the meantime, a workaround is to automate downloading the feed to a local file and fixing the namespace, and use the local file path in the config instead.
 * The unpickled objects are not checked for correctness; something weird may happen if the version of Python and/or `feedparser` changes. I suggest clearing the cache between upgrades.
