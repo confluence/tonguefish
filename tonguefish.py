@@ -231,7 +231,14 @@ class Feed(TimeZoneMixIn):
     FEEDHEADER = Template("""
 <div class="$classes">
 <h1 class="feedtitle">$feedtitle</h1>
+<div class="feedcontent">
+    $feedcontent
+</div>
 <ul>
+""")
+    
+    FEEDCONTENT =  Template("""
+<h1 class="feedtitle"><a href="$feedpageurl">$feedtitle</a>: <a class="feedurl" href="$feedurl">$feedurl</a></h1>
 """)
 
     FEEDFOOTER = """
@@ -242,13 +249,17 @@ class Feed(TimeZoneMixIn):
     ENTRY = Template("""
 <li class="$classes">
     <span class="published">$date</span>
-    <a href="$link">$title</a>
-    <div class="blurb">
+    <a href="$link">$entrytitle</a>
+    <div class="entrycontent">
         <h1 class="feedtitle">$feedtitle</h1>
-        <h1 class="blurbtitle"><a href="$link">$title</a></h1>
-        $blurb
+        <h1 class="entrytitle"><a href="$link">$entrytitle</a></h1>
+        $entrycontent
     </div>
 </li>
+""")
+    
+    THUMBNAIL = Template("""
+<img src="$url" width="$width" height="$height" />
 """)
     
     IGNORE_TOPLEVEL = {"feeds", "categories", "url", "title", "timezone", "tzoffset"}
@@ -330,9 +341,9 @@ class Feed(TimeZoneMixIn):
         contentrule = rules.pop("content", None)
         
         def ignore(e):
-            if linkrule and linkrule.search(self.get_entry_link(e)):
+            if linkrule and linkrule.search(self.get_link(e)):
                 return True
-            if contentrule and contentrule.search(self.get_content(e)):
+            if contentrule and contentrule.search(self.get_entry_content(e)):
                 return True
             for field, rule in rules.items():
                 if rule.search(getattr(e, field)):
@@ -340,6 +351,12 @@ class Feed(TimeZoneMixIn):
             return False
             
         return ignore
+    
+    # TODO rename this once entry stuff is factored out
+    def get_feed_content(self, feed_obj):
+        # TODO make a helper for this too
+        title = self.conf.get("title") or feed_obj.feed.title
+        return self.FEEDCONTENT.safe_substitute(feedpageurl=self.get_link(feed_obj.feed), feedtitle=title, feedurl=self.conf["url"])
     
     def get_timetuple(self, entry):
         timetuple = entry.get("published_parsed", entry.get("updated_parsed"))
@@ -355,27 +372,51 @@ class Feed(TimeZoneMixIn):
                     logger.debug("Could not parse publication date in feed %s: %s", self.feed_id, e)
                     
         return timetuple
-    
-    def get_content(self, entry):
+
+    def get_entry_content(self, entry):
+        thumbnail = None
+        thumb_list = entry.get("media_thumbnail", [])
+        if len(thumb_list):
+            thumbnail = thumb_list[0]
+            small_thumbnail = (thumbnail["width"] == thumbnail["height"] == "72")
+            thumb_str = self.fix_image(self.THUMBNAIL.safe_substitute(thumbnail))
+        
+        entrycontent = []
+        
         if self.conf.get("full_content", False):
+            if thumbnail and not small_thumbnail:
+                entrycontent.append(thumb_str)
+            
             content_list = entry.get("content", [])
             
             for content in content_list:
-                
                 content_value = content.get("value")
                 content_type = content.get("type")
                 
                 if content_type == "text/html" and content_value:
-                    return content_value
+                    entrycontent.append(content_value)
+                    break
+            else:
+                entrycontent.append(entry.get("description", ""))
+        else:
+            if thumbnail and small_thumbnail:
+                entrycontent.append(thumb_str)
+            entrycontent.append(entry.get("description", ""))
         
-        return entry.get("description")
+        return "".join(entrycontent)
     
-    def get_entry_link(self, entry):
-        if "link" in entry:
-            return entry.link
-        if "links" in entry:
-            return entry.links[0].href
-        raise ValueError("Could not find link for entry.")
+    def get_classes(self):
+        classes = ["feed", self.conf.get("category", "uncategorised")]
+        if "hide" in self.conf:
+            classes.append("hide")
+        return classes
+    
+    def get_link(self, obj):
+        if "link" in obj:
+            return obj.link
+        if "links" in obj:
+            return obj.links[0].href
+        raise ValueError("Could not find link for object.")
     
     def fix_image(self, img_string):
         img_obj = ET.fromstring(img_string)
@@ -421,12 +462,10 @@ class Feed(TimeZoneMixIn):
         title = self.conf.get("title") or feed_obj.feed.title
         
         # Feed classes
-        classes = ["feed", self.conf.get("category", "uncategorised")]
-        if "hide" in self.conf:
-            classes.append("hide")
+        classes = self.get_classes()
             
         # Write header
-        out.write(self.FEEDHEADER.safe_substitute(feedtitle=title, classes=" ".join(classes)))
+        out.write(self.FEEDHEADER.safe_substitute(feedtitle=title, feedcontent=self.get_feed_content(feed_obj), classes=" ".join(classes)))
         
         # Per-feed limits
         max_num = self.conf.get("max_entry_num", 0)
@@ -459,7 +498,7 @@ class Feed(TimeZoneMixIn):
         # Write footer
         out.write(self.FEEDFOOTER)
         
-
+    # TODO move the entry stuff to an entry object
     def write_entry(self, e, out, now, feedtitle, feed_tz, max_age):
         # Default entry classes
         classes = ["entry"]
@@ -500,16 +539,21 @@ class Feed(TimeZoneMixIn):
         classes_str = " ".join(classes)
         
         # Apply image fixes
-        content = self.get_content(e)
+        content = self.get_entry_content(e)
         images = self.IMAGE.findall(content)
         for image in images:
             content = content.replace(image, self.fix_image(image))
         
         # Write entry
-        out.write(self.ENTRY.safe_substitute(classes=classes_str, date=date_str, link=self.get_entry_link(e), title=e.title, blurb=content, feedtitle=feedtitle))
+        out.write(self.ENTRY.safe_substitute(classes=classes_str, date=date_str, link=self.get_link(e), entrytitle=e.title, entrycontent=content, feedtitle=feedtitle))
 
 
 class Group(Feed):
+    FEEDCONTENT =  Template("""
+<h1 class="grouptitle">Group: $grouptitle</h1>
+$feeds
+""")
+    
     def __init__(self, feeds):
         self.feeds = feeds
         self.conf = {}
@@ -555,22 +599,30 @@ class Group(Feed):
             raise ValueError("No valid feed found in group %s.", self.feed_id)
         
         group_obj = FakeObj()
-        group_obj.feed.title = self.feed_id.capitalize()
+        group_obj.feed.title = self.feed_id.replace("_", " ").capitalize()
         
         seen = set()
         entries = []
         
         for f in feed_objs:
             for e in f.entries:
-                l = self.get_entry_link(e)
+                l = self.get_link(e)
                 if l not in seen:
                     entries.append(e)
                     seen.add(l)
         
         group_obj.entries = sorted(entries, key=lambda e: self.get_timetuple(e), reverse=True)
-        
+        group_obj.feed_objs = feed_objs
         return group_obj
-        
+    
+    def get_classes(self):
+        return ["group", *super().get_classes()]
+    
+    def get_feed_content(self, feed_obj):
+        title = self.conf.get("title") or feed_obj.feed.title
+        feedcontents = "".join(feed.get_feed_content(f_obj) for (feed, f_obj) in zip(self.feeds, feed_obj.feed_objs))
+        return self.FEEDCONTENT.safe_substitute(grouptitle=title, feeds=feedcontents)
+
 
 class Digest(Feed):
     def __init__(self, feed):
@@ -601,6 +653,9 @@ class Digest(Feed):
     def rename_category(self, old_name, new_name):
         self.feed.rename_category(old_name, new_name)
         self.calculate_conf()
+    
+    def get_classes(self):
+        return ["digest", *self.feed.get_classes()]
 
     def get_obj(self, parser):
         feed_obj = parser.get_feed_obj(self.feed)
@@ -652,19 +707,19 @@ class Digest(Feed):
             
             dates = [self.get_timetuple(e) for e in entries]
             titles = [e.title for e in entries]
-            links = [self.get_entry_link(e) for e in entries]
-            blurbs = [self.get_content(e) for e in entries]
+            links = [self.get_link(e) for e in entries]
+            entrycontents = [self.get_entry_content(e) for e in entries]
             
             digest_e = FakeObj()
             digest_e.published_parsed = [sum(l)//len(l) for l in zip(*dates)]
-            digest_e.description = "\n".join(f'<h1><a href="{l}">{t}</a></h1>\n{d}' for t, l, d in zip(titles, links, blurbs))
+            digest_e.description = "\n".join(f'<h1><a href="{l}">{t}</a></h1>\n{d}' for t, l, d in zip(titles, links, entrycontents))
                     
             # Try to generate title and link
             if "id_find" in digest_conf and "id_source" in digest_conf:
                 sources = {
                     "link": links,
                     "title": titles,
-                    "content": blurbs,
+                    "content": entrycontents,
                 }
                 
                 id_find = re.compile(digest_conf["id_find"])

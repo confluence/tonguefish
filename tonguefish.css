@@ -74,7 +74,8 @@ a:hover {
     text-decoration: underline;
 }
 
-.blurb {
+.entrycontent, .feedcontent {
+    background: white;
     font-size: 12pt;
     transition-delay: 0.5s;
     transition-property: visibility;
@@ -88,41 +89,45 @@ a:hover {
     overflow: auto;
 }
 
-li:hover > .blurb {
+li:hover > .entrycontent, .feed:hover:not(:has(ul:hover)) > .feedcontent {
     transition-delay: 0.5s;
     transition-property: visibility;
     visibility: visible;
 }
 
-.blurb h1 {
+.entrycontent h1, .group .feedcontent .feedtitle {
     font-size: 14pt;
 }
 
-.blurb h1.feedtitle {
+a.feedurl {
+    font-weight: normal;
+}
+
+.entrycontent h1.feedtitle, .feedcontent .feedtitle, .grouptitle {
     font-size: 18pt;
     margin-top: 0px;
 }
 
-.blurb h1.blurbtitle {
+.entrycontent h1.entrytitle {
     font-size: 16pt;
 }
 
-.blurb figure {
+.entrycontent figure {
     margin: 0px;
     padding: 0px;
 }
 
-.blurb img {
+.entrycontent img {
     --max-width: 34vw;
     object-fit: contain;
     max-width: calc(var(--max-width) - 22px);
     max-height: calc(var(--max-width) * var(--aspect-ratio) - 22px)
 }
 
-.blurb h1 a:visited {
+.entrycontent h1 a:visited {
     color: #303030;
 }
 
-.blurb a {
+.entrycontent a {
     font-weight: bold;
 }
