@@ -65,6 +65,7 @@ class Cache:
         
     def get(self, feed_url):
         cache_url = self.get_cache_url(feed_url)
+        logger.debug("Loading cache for url %s from %s...", feed_url, cache_url)
         if os.path.isfile(cache_url):
             self.seen.add(cache_url)
             
@@ -76,6 +77,7 @@ class Cache:
     
     def put(self, feed_url, feed_obj, old_feed_url=None):
         cache_url = self.get_cache_url(feed_url)
+        logger.debug("Saving cache for url %s to %s...", feed_url, cache_url)
         self.seen.add(cache_url)
         
         # We have to do this to stop pickle from blowing up because SAXParseException contains a closed file-like object
@@ -107,10 +109,12 @@ class Feedparser:
         url = feed.conf["url"]
         
         if old_feed_obj:
+            logger.debug("Updating feed %s...", url)
             etag = old_feed_obj.get("etag")
             modified = old_feed_obj.get("modified")
             feed_obj = feedparser.parse(url, etag=etag, modified=modified)
         else:
+            logger.debug("Fetching new feed %s...", url)
             feed_obj = feedparser.parse(url)
         
         if feed_obj.status == 200:
@@ -124,7 +128,16 @@ class Feedparser:
         
         elif feed_obj.status == 302:
             new_url = feed_obj.href
-            logger.warning("%s has redirected temporarily to %s -- using new url; not editing config.", url, new_url)
+            logger.warning("%s has redirected temporarily to %s. Not editing config.", url, new_url)
+            
+            if not feed_obj.feed.keys():
+                # The redirect is probably masking a 304
+                if old_feed_obj:
+                    logger.info("%s: no update required (probably).", url)
+                    logger.debug(feed_obj)
+                    return old_feed_obj
+                raise ValueError("Received empty response with 302 status.")
+            
             self.cache.put(url, feed_obj)
             return feed_obj
         
@@ -132,6 +145,17 @@ class Feedparser:
             new_url = feed_obj.href
             logger.warning("%s has redirected permanently to %s -- updating config.", url, new_url)
             feed.update_url(new_url)
+            
+            if not feed_obj.feed.keys():
+                # The redirect is probably masking a 304
+                if old_feed_obj:
+                    logger.info("%s: no update required (probably).", url)
+                    logger.debug(feed_obj)
+                    # Save the old object to the new location
+                    self.cache.put(new_url, old_feed_obj, url)
+                    return old_feed_obj
+                raise ValueError("Received empty response with 301 status.")
+            
             self.cache.put(new_url, feed_obj, url)
             return feed_obj
             
@@ -387,6 +411,7 @@ class Feed(TimeZoneMixIn):
         return fixed_img_string
         
     def generate(self, parser, out, now):
+        logger.info("Generating feed %s...", self.feed_id)
         feed_obj = self.get_obj(parser)
         
         # Create ignore filter
@@ -530,9 +555,19 @@ class Group(Feed):
             raise ValueError("No valid feed found in group %s.", self.feed_id)
         
         group_obj = FakeObj()
-        #group_obj.feed = FakeObj()
         group_obj.feed.title = self.feed_id.capitalize()
-        group_obj.entries = sorted(chain.from_iterable(f.entries for f in feed_objs), key=lambda e: self.get_timetuple(e), reverse=True)
+        
+        seen = set()
+        entries = []
+        
+        for f in feed_objs:
+            for e in f.entries:
+                l = self.get_entry_link(e)
+                if l not in seen:
+                    entries.append(e)
+                    seen.add(l)
+        
+        group_obj.entries = sorted(entries, key=lambda e: self.get_timetuple(e), reverse=True)
         
         return group_obj
         
@@ -571,7 +606,6 @@ class Digest(Feed):
         feed_obj = parser.get_feed_obj(self.feed)
         
         digest_obj = FakeObj()
-        #digest_obj.feed = FakeObj()
         digest_obj.feed.title = feed_obj.feed.title
         digest_obj.entries = []
         
