@@ -193,7 +193,9 @@ hide = 1
 
 `tonguefish` needs Python 3, [`feedparser`](https://feedparser.readthedocs.io/en/latest/) and [`tomlkit`](https://tomlkit.readthedocs.io/en/latest/). On Windows you will also need the `tzdata` package if you want to use IANA strings to configure local timezones.
 
-You need an input directory, an output directory, and a cache directory. The input directory must contain at minimum a `feeds.toml` file and a copy of or symbolic link to the `tonguefish.css` stylesheet. Custom CSS can be placed in separate files in the input directory; they will be copied to the output directory. Any files called `favicon.*` (any suffix) in the input directory will be copied to the output directory and used as favicons. A default is provided (you have to copy or symlink it, like the default stylesheet).  The `tonguefish.py` script is standalone, and can be run from / moved to any working directory.
+You need to provide an input directory (the default is `./input`), which must contain at minimum a `feeds.toml` file and a copy of or symbolic link to the `tonguefish.css` stylesheet. `tonguefish` also uses an output directory (default: `./output`), a cache directory (default: `./cache`), and a temp directory output(default: `/tmp`).
+
+Custom CSS can be placed in separate files in the input directory; they will be copied to the output directory. Any files called `favicon.*` (any suffix) in the input directory will be copied to the output directory and used as favicons. A default is provided (you have to copy or symlink it, like the default stylesheet).  The `tonguefish.py` script is standalone, and can be run from / moved to any working directory (just remember to specify the paths to all the locations correctly).
 
 `tonguefish` can be run with all downloads disabled (useful for changing configuration of existing feeds, or development of `tonguefish` itself), or with updates disabled but fetching of missing feeds enabled (useful for adding new feeds).
 
@@ -217,7 +219,7 @@ git clone https://github.com/confluence/tonguefish.git
 
 ```shell
 cd tonguefish
-mkdir input output cache
+mkdir input
 
 # Set up basic config
 ln -s ../tonguefish.css input
@@ -231,7 +233,7 @@ vim input/feeds.toml
 
 ```shell
 # Run tonguefish
-./tonguefish.py input output cache
+./tonguefish.py
 
 # Open the generated webpage in your preferred browser
 xdg-open output/index.html
@@ -246,7 +248,7 @@ Once your current feeds have been downloaded and cached, you can re-run `tonguef
 vim input/feeds.toml
 
 # Run tonguefish with all downloads disabled
-./tonguefish.py --no-update --no-new input output cache
+./tonguefish.py --action generate
 ```
 
 ### Configure local time
@@ -273,7 +275,7 @@ crontab -e
 Enter this line (substituting full paths as appropriate), and save the crontab:
 
 ```cron
-@hourly /path/to/tonguefish.py /path/to/input /path/to/output /path/to/cache >> /path/to/logfile 2>&1
+@hourly cd /path/to/tonguefish/dir' ./tonguefish.py >> /path/to/logfile 2>&1
 ```
 
 A log can be useful for debugging, but if you don't want to log output, replace `>> /path/to/logfile` with `> /dev/null`. By default `tonguefish` will only print warnings and errors.
@@ -291,14 +293,14 @@ Technically you don't need to refresh more frequently than the feed update inter
 
 ### Add a new feed
 
-Edit `feeds.toml` to add your new feed, and then run `tonguefish` with updates disabled and new feed fetching enabled.
+Edit `feeds.toml` to add your new feed, and then run `tonguefish` with updates disabled and fetching of new feeds enabled.
 
 ```shell
 # Edit feeds.toml
 vim input/feeds.toml
 
-# Run tonguefish with updates disabled
-./tonguefish.py --no-update input output cache
+# Run tonguefish with updates disabled and fetching of new feeds enabled
+./tonguefish.py --action new
 ```
 
 ### Troubleshooting
@@ -307,10 +309,10 @@ You can run `tonguefish` with increased verbosity to see more information.
 
 ```shell
 # Show info messages
-./tonguefish.py -v input output cache
+./tonguefish.py -v
 
 # Show debug messages
-./tonguefish.py -vv input output cache
+./tonguefish.py -vv
 ```
 
 ## Future work
@@ -336,13 +338,10 @@ I hacked this together in a couple of days, and it's very alpha, but it's usable
 **Technical**
 
 * More code refactoring and cleanup
-* Writing files to temporary locations first instead of in-place rewriting (see below).
 * Fetching and caching the data first, and then writing the index page (also see below).
 
 ### Known issues
 
-* `tonguefish` downloads, parses, and writes out feeds sequentially in a single pass, so it takes a lot of time to write out the whole index page. It also updates the page in place, so if the page is refreshed while `tonguefish` is working, or after it has crashed, you will see a blank or partial page. Doing all the downloading and caching first and all the writing separately will improve this, and also allow you to cancel an accidental feed update without messing up the page.
-* Writing out the cache files and config file, and writing the index from cached data only, is very fast -- but it *could* be interrupted if you get unlucky, and that could be very bad, particularly for the config file, so I'm going to start using a temporary output location.
-* Extra files are not removed from the output directory (could cause problems with stylesheets or favicons). Will be fixed by the above fix.
+* Extra files are not removed from the output directory (could cause problems with stylesheets or favicons).
 * If the Python bindings for `libxml2` are installed, `feedparser` uses a more strict parser which chokes on feeds with missing namespace declarations. I'm going to see how best to fix this. In the meantime, a workaround (if you can't uninstall the bindings or use a virtualenv) is to automate downloading the feed to a local file and fixing the namespace, and use the local file path in the config instead.
 * The unpickled objects are not checked for correctness; something weird may happen if the version of Python and/or `feedparser` changes. I suggest clearing the cache between upgrades.

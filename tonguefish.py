@@ -11,6 +11,7 @@ import pickle
 import logging
 import argparse
 import xml.etree.ElementTree as ET
+import uuid
 
 from string import Template
 from zoneinfo import ZoneInfo
@@ -54,6 +55,30 @@ class FakeObj(MutableMapping):
         self._d[name] = value
 
 
+class TempWriter:
+    @classmethod
+    def configure(cls, temp_dir):
+        cls.temp_dir = os.path.join(temp_dir, f"tonguefish-{uuid.uuid4().hex}")
+    
+    def __init__(self, path, mode="w"):
+        self.path = path
+        self.temp_path = os.path.join(self.temp_dir, path)
+        self.mode = mode
+        self.temp_file = None
+    
+    def __enter__(self):
+        os.makedirs(os.path.dirname(self.temp_path), exist_ok=True)
+        self.temp_file = open(self.temp_path, self.mode)
+        return self.temp_file
+    
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.temp_file:
+            self.temp_file.close()
+            if not exc_type:
+                os.makedirs(os.path.dirname(self.path), exist_ok=True)
+                shutil.move(self.temp_path, self.path)
+
+
 class Cache:
     def __init__(self, cache_dir):
         self.cache_dir = cache_dir
@@ -87,7 +112,7 @@ class Cache:
             del feed_obj["bozo_exception"]
             feed_obj["bozo"] = False
         
-        with open(cache_url, "wb") as f:
+        with TempWriter(cache_url, "wb") as f:
             pickle.dump(feed_obj, f)
             
         if old_feed_url:
@@ -223,7 +248,7 @@ class MainConfig(TimeZoneMixIn):
         checksum = hashlib.sha1(data.encode("utf-8")).hexdigest()
         if checksum != self.checksum:
             logger.warning("Writing out config, which has been modified.")
-            with open(file_path, "w") as f:
+            with TempWriter(file_path, "w") as f:
                 f.write(data)
 
 
@@ -424,10 +449,12 @@ class Feed(TimeZoneMixIn):
         # Load images lazily
         img_obj.set("loading", "lazy")
         
-        width = int(img_obj.get("width", 0))
-        height = int(img_obj.get("height", 0))
+        width = img_obj.get("width", 0)
+        height = img_obj.get("height", 0)
         
         if width and height:
+            numeric_w_h = False
+            
             max_width = self.conf.get("max_img_width")
             if max_width:
                 m = self.RESIZE_SRC.search(img_obj.get("src"))
@@ -435,18 +462,27 @@ class Feed(TimeZoneMixIn):
                     pre, w, sep, h, post = m.groups()
                     w, h = int(w), int(h)
                     if w > max_width:
-                        w, h = max_width, h * max_width // w
+                        w, h = max_width, h * max_width / w
                     # Fetch resized images from server
                     img_obj.set("src", f"{pre}{w}{sep}{h}{post}")
                     
                     width, height = w, h
                     img_obj.set("width", str(width))
                     img_obj.set("height", str(height))
+                    numeric_w_h = True
             
-            aspect_ratio = height / width
-            
-            # Set aspect ratio (for correct CSS resizing later)
-            img_obj.set("style", f"--aspect-ratio: {aspect_ratio};")
+            if not numeric_w_h:
+                try:
+                    width, height = float(width), float(height)
+                    numeric_w_h = True
+                except ValueError:
+                    pass
+                    
+            if numeric_w_h:
+                aspect_ratio = height / width
+                
+                # Set aspect ratio (for correct CSS resizing later)
+                img_obj.set("style", f"--aspect-ratio: {aspect_ratio};")
         
         fixed_img_string = ET.tostring(img_obj, encoding="unicode")
         return fixed_img_string
@@ -491,7 +527,7 @@ class Feed(TimeZoneMixIn):
                     break;
                 
             except (KeyError, AttributeError, ValueError) as err:
-                logger.warn("Couldn't parse entry %s: %s", i, err)
+                logger.warning("Couldn't parse entry %s: %s", i, err)
                 logger.debug("Entry keys: %r", " ".join(dict(e).keys()))
                 continue
         
@@ -799,7 +835,7 @@ class Filters:
     
     def write_css(self, file_path):
         logger.info("Writing generated CSS for filter rules.")
-        with open(file_path, "w") as f:
+        with TempWriter(file_path, "w") as f:
             f.write(self.age_filter_css)
             f.write(self.cat_filter_css)
 
@@ -905,6 +941,7 @@ $cat_filters
         logger.info("Running tonguefish at %s", now.strftime("%a %d %b %Y, %H:%M"))
         
         # Copy input stylesheets and favicons
+        os.makedirs(self.output_dir, exist_ok=True)
         for input_file in (*self.stylesheet_paths, *self.favicon_paths):
             try:
                 shutil.copy(input_file, self.output_dir)
@@ -929,7 +966,7 @@ $cat_filters
         # Generate page header
         header = self.HEADER.safe_substitute(refresh=refresh, stylesheets=stylesheets, favicons=favicons, age_filters=filters.age_filters, cat_filters=filters.cat_filters)
         
-        with open(self.output_path, "w") as out:
+        with TempWriter(self.output_path, "w") as out:
             out.write(header)
             
             for feed in self.feeds:
@@ -945,12 +982,12 @@ $cat_filters
         self.conf.save(self.conf_path)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(prog='tonguefish', description='A static RSS and Atom feed aggregator')
-    parser.add_argument('input_dir', help="The directory which contains feeds.toml, tonguefish.css, and any custom CSS files.")
-    parser.add_argument('output_dir', help="The directory where index.html will be written and CSS files will be copied.")
-    parser.add_argument('cache_dir', help="The directory where cached feed objects will be stored.")
-    parser.add_argument('--no-update', action='store_true', help="Don't update existing feeds.")
-    parser.add_argument('--no-new', action='store_true', help="Don't fetch missing feeds.")
+    parser = argparse.ArgumentParser(prog='tonguefish', description='A static RSS and Atom feed aggregator that outputs a single compact webpage.')
+    parser.add_argument('-a', "--action", help="Your chosen action. 'generate' writes out the output files. 'new' additionally downloads missing feeds. 'update' additionally updates existing feeds.  (default: %(default)s)", choices=("update", "new", "generate"), default="update")
+    parser.add_argument('-i', '--input_dir', help="The directory which contains feeds.toml, tonguefish.css, and any custom CSS files (default: %(default)s).", default="./input")
+    parser.add_argument('-o', '--output_dir', help="The directory where index.html will be written and CSS files will be copied (default: %(default)s).", default="./output")
+    parser.add_argument('-c', '--cache_dir', help="The directory where cached feed objects will be stored (default: %(default)s).", default="./cache")
+    parser.add_argument('-t', '--temp_dir', help="The directory where partial files will be written before being moved to the output directory, cache, or input directory (default: %(default)s).", default="/tmp")
     parser.add_argument('-v', '--verbose', action='count', default=0, help="Increase the logging verbosity. By default only warnings and errors are printed. -v turns on info. -vv turns on debug.")
     args = parser.parse_args()
     
@@ -962,11 +999,17 @@ if __name__ == "__main__":
     
     logging.basicConfig(level=log_level)
     
-    if args.no_update:
-        logger.info("NO UPDATE option is enabled. Will not update existing feeds.")
+    no_update = False if args.action == "update" else True
+    no_new = True if args.action == "generate" else False
     
-    if args.no_new:
-        logger.info("NO NEW option is enabled. Will not fetch missing feeds.")
+    if no_update:
+        logger.info("Will not update existing feeds.")
+    
+    if no_new:
+        logger.info("Will not fetch missing feeds.")
+    
+    TempWriter.configure(args.temp_dir)
     
     tonguefish = Tonguefish(args.input_dir, args.output_dir, args.cache_dir)
-    tonguefish.generate(args.no_update, args.no_new)
+    tonguefish.generate(no_update, no_new)
+    # TODO split downloads and generating
