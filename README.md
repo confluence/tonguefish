@@ -301,7 +301,7 @@ vim input/feeds.toml
 ./tonguefish.py --no-update input output cache
 ```
 
-## Troubleshooting
+### Troubleshooting
 
 You can run `tonguefish` with increased verbosity to see more information.
 
