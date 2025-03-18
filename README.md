@@ -6,7 +6,7 @@ Yet another static RSS and Atom feed aggregator
 
 ## What's this?
 
-This is a static generator which produces an extremely compact bird's-eye view of all your feeds on a single webpage. I hacked this together in a couple of days, and it's very alpha, but it's usable (at least by me).
+This is a static generator which produces an extremely compact bird's-eye view of all your feeds on a single webpage.
 
 ## That sounds like a lot of stuff on one page.
 
@@ -313,11 +313,36 @@ You can run `tonguefish` with increased verbosity to see more information.
 ./tonguefish.py -vv input output cache
 ```
 
-## Known issues
+## Future work
 
-* If you interrupt `tonguefish` in the middle of writing a cache file, the next time it will load the partial file and probably crash when it can't find something. I will fix this by using a temporary download location.
-* If the page refreshes while `tonguefish` is working, or after it has crashed, you will see a partial page. I will fix this by using a temporary output directory and only replacing the existing output if generation completes successfully.
+I hacked this together in a couple of days, and it's very alpha, but it's usable (at least by me). I'm eating the cat food -- expect rapid bursts of development as I subscribe to new feeds and find more things that break.
+
+### Likely upcoming changes
+
+**Display**
+
+* Incorporation of more data from feeds and entries (e.g. author; publication date; direct links to media) and more information about current feed configuration
+* Style improvements
+* More feed customisation options
+* Ordering of feeds (currently the order in the configuration is preserved, except that group feeds are added at the end)
+* *Maybe* some tasteful use of colour and icons in the main list
+
+**Conf file modification**
+
+* Script option to add a new feed
+* Script option to add missing feed titles to config (so that you can identify mystery meat URLs in the file if you didn't bother to annotate them with comments when you added them)
+* Other script options to normalize the config file
+
+**Technical**
+
+* More code refactoring and cleanup
+* Writing files to temporary locations first instead of in-place rewriting (see below).
+* Fetching and caching the data first, and then writing the index page (also see below).
+
+### Known issues
+
+* `tonguefish` downloads, parses, and writes out feeds sequentially in a single pass, so it takes a lot of time to write out the whole index page. It also updates the page in place, so if the page is refreshed while `tonguefish` is working, or after it has crashed, you will see a blank or partial page. Doing all the downloading and caching first and all the writing separately will improve this, and also allow you to cancel an accidental feed update without messing up the page.
+* Writing out the cache files and config file, and writing the index from cached data only, is very fast -- but it *could* be interrupted if you get unlucky, and that could be very bad, particularly for the config file, so I'm going to start using a temporary output location.
 * Extra files are not removed from the output directory (could cause problems with stylesheets or favicons). Will be fixed by the above fix.
-* There's no ordering of feeds. The order in the configuration is preserved, except that group feeds are added at the end.
-* If the Python bindings for `libxml2` are installed, `feedparser` uses a more strict parser which chokes on feeds with missing namespace declarations. I could try to fix this by rewriting the feeds before parsing, but it's going to be annoying. In the meantime, a workaround is to automate downloading the feed to a local file and fixing the namespace, and use the local file path in the config instead.
+* If the Python bindings for `libxml2` are installed, `feedparser` uses a more strict parser which chokes on feeds with missing namespace declarations. I'm going to see how best to fix this. In the meantime, a workaround (if you can't uninstall the bindings or use a virtualenv) is to automate downloading the feed to a local file and fixing the namespace, and use the local file path in the config instead.
 * The unpickled objects are not checked for correctness; something weird may happen if the version of Python and/or `feedparser` changes. I suggest clearing the cache between upgrades.
