@@ -60,6 +60,10 @@ class TempWriter:
     def configure(cls, temp_dir):
         cls.temp_dir = os.path.join(temp_dir, f"tonguefish-{uuid.uuid4().hex}")
     
+    @classmethod
+    def clean(cls):
+        shutil.rmtree(cls.temp_dir)
+    
     def __init__(self, path, mode="w"):
         self.path = path
         self.temp_path = os.path.join(self.temp_dir, path)
@@ -1012,4 +1016,7 @@ if __name__ == "__main__":
     
     tonguefish = Tonguefish(args.input_dir, args.output_dir, args.cache_dir)
     tonguefish.generate(no_update, no_new)
-    # TODO split downloads and generating
+    
+    # Remove the temp directory if the generation was successful.
+    # The output of interrupted runs is not removed, by design.
+    TempWriter.clean()
