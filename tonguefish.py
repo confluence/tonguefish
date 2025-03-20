@@ -295,6 +295,7 @@ class Feed(TimeZoneMixIn):
     IGNORE_CATEGORY = {"url", "title", "category", "timezone", "tzoffset"}
     
     IMAGE = re.compile("<img .*?/?>")
+    VIDEO = re.compile("<video .*?</video>")
     RESIZE_SRC = re.compile("(https?://.*?\?resize=)(\d+)(%2C)(\d+)(.*)")
     
     @staticmethod
@@ -447,6 +448,15 @@ class Feed(TimeZoneMixIn):
             return obj.links[0].href
         raise ValueError("Could not find link for object.")
     
+    def fix_video(self, vid_string):
+        vid_obj = ET.fromstring(vid_string)
+        
+        # Don't preload videos
+        vid_obj.set("preload", "none")
+        vid_obj.attrib.pop("autoplay", None)
+        
+        return ET.tostring(vid_obj, encoding="unicode")
+    
     def fix_image(self, img_string):
         img_obj = ET.fromstring(img_string)
         
@@ -488,8 +498,7 @@ class Feed(TimeZoneMixIn):
                 # Set aspect ratio (for correct CSS resizing later)
                 img_obj.set("style", f"--aspect-ratio: {aspect_ratio};")
         
-        fixed_img_string = ET.tostring(img_obj, encoding="unicode")
-        return fixed_img_string
+        return ET.tostring(img_obj, encoding="unicode")
         
     def generate(self, parser, out, now):
         logger.info("Generating feed %s...", self.feed_id)
@@ -580,9 +589,14 @@ class Feed(TimeZoneMixIn):
         
         # Apply image fixes
         content = self.get_entry_content(e)
+        
         images = self.IMAGE.findall(content)
         for image in images:
             content = content.replace(image, self.fix_image(image))
+        
+        videos = self.VIDEO.findall(content)
+        for video in videos:
+            content = content.replace(video, self.fix_video(video))
         
         # Write entry
         out.write(self.ENTRY.safe_substitute(classes=classes_str, date=date_str, link=self.get_link(e), entrytitle=e.title, entrycontent=content, feedtitle=feedtitle))
