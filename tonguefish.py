@@ -18,7 +18,6 @@ from zoneinfo import ZoneInfo
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict, ChainMap
 from collections.abc import MutableMapping
-from itertools import chain
 
 import tomlkit
 import feedparser
@@ -213,22 +212,21 @@ class Feedparser:
             return self.update(feed)
 
 
-class TimeZoneMixIn:
-    def get_timezone(self):
-        timezone = self.conf.get("timezone")
+class Config:
+    @staticmethod
+    def get_timezone(conf):
+        timezone = conf.get("timezone")
         if timezone:
             # IANA string (preferred)
             return ZoneInfo(timezone)
         
-        tzoffset = self.conf.get("tzoffset")
+        tzoffset = conf.get("tzoffset")
         if tzoffset:
             # Fixed hour offset
             return timezone(timedelta(hours=tzoffset))
         
         return None
-
-
-class MainConfig(TimeZoneMixIn):
+    
     def __init__(self, file_path):
         with open(file_path) as f:
             data = f.read()
@@ -256,34 +254,7 @@ class MainConfig(TimeZoneMixIn):
                 f.write(data)
 
 
-class Entry():
-    def __init__(self, entry_obj, feed_conf):
-        self.entry_obj = entry_obj
-        self.feed_conf = feed_conf
-        
-    def generate(self):
-        pass
-
-
-class Feed(TimeZoneMixIn):
-    FEEDHEADER = Template("""
-<div class="$classes">
-<h1 class="feedtitle">$feedtitle</h1>
-<div class="feedcontent">
-    $feedcontent
-</div>
-<ul>
-""")
-    
-    FEEDCONTENT =  Template("""
-<h1 class="feedtitle"><a href="$feedpageurl">$feedtitle</a>: <a class="feedurl" href="$feedurl">$feedurl</a></h1>
-""")
-
-    FEEDFOOTER = """
-</ul>
-</div>
-"""
-
+class Entry:
     ENTRY = Template("""
 <li class="$classes">
     <span class="published">$date</span>
@@ -300,163 +271,41 @@ class Feed(TimeZoneMixIn):
 <img src="$url" width="$width" height="$height" />
 """)
     
-    IGNORE_TOPLEVEL = {"feeds", "categories", "url", "title", "timezone", "tzoffset"}
-    IGNORE_CATEGORY = {"url", "title", "category", "timezone", "tzoffset"}
-    
     IMAGE = re.compile("<img .*?/?>")
     VIDEO = re.compile("<video .*?</video>")
     RESIZE_SRC = re.compile("(https?://.*?\?resize=)(\d+)(%2C)(\d+)(.*)")
     
-    @staticmethod
-    def get_feeds(main_conf):
-        feeds = []
-        groups = defaultdict(list)
-        
-        for feed_conf in main_conf.get("feeds", []):
-            feed = Feed(main_conf, feed_conf)
-            group = feed.conf.get("group")
-            
-            if group:
-                groups[group].append(feed)
-            else:
-                feeds.append(feed)
-            
-        for group, grouped_feeds in groups.items():
-            feeds.append(Group(grouped_feeds))
-        
-        return [(Digest(feed) if "digest" in feed.conf else feed) for feed in feeds]
+    def __init__(self, entry_obj, feed):
+        self.entry_obj = entry_obj
+        self.feed = feed
     
-    def __init__(self, main_conf, feed_conf):
-        self.main_conf = main_conf
-        self.orig_conf = feed_conf
-        self.conf = {}
-        self.feed_id = None
-        self.calculate_conf()
-        
-    def calculate_conf(self):
-        # Construct combined prefs from top-level, category and feed entries
-        
-        # Clear in place
-        self.conf.clear()
-        
-        # Apply top-level prefs first
-        self.conf.update({k:v for (k, v) in self.main_conf.conf.items() if k not in self.IGNORE_TOPLEVEL})
-        
-        # Then category prefs
-        category = self.orig_conf.get("category", "uncategorised")
-        category_conf = self.main_conf.get("categories", {}).get(category)
-        if category_conf:
-            self.conf.update({k:v for (k, v) in category_conf.items() if k not in self.IGNORE_CATEGORY})
-        
-        # Finally the per-feed prefs
-        self.conf.update(self.orig_conf)
-        
-        self.feed_id = self.conf["url"]
-
-    def update_url(self, url):
-        old_url = self.orig_conf["url"]
-        self.orig_conf["url"] = url
-        self.orig_conf["url"].comment(f"# Updated automatically from {old_url}")
-        self.calculate_conf()
-    
-    def disable_url(self):
-        old_url = self.orig_conf["url"]
-        self.orig_conf["url_disabled"] = old_url
-        self.orig_conf["url_disabled"].comment("# This feed is gone and should be removed.")
-        del self.orig_conf["url"]
-        self.calculate_conf()
-        
-    def rename_category(self, old_name, new_name):
-        self.orig_conf["category"] = new_name
-        self.orig_conf["category"].comment(f"# Updated automatically from {old_name}")
-        self.calculate_conf()
-            
-    def get_obj(self, parser):
-        return parser.get_feed_obj(self)
-    
-    def get_ignore(self):
-        rules = {field: re.compile(regex) for (field, regex) in self.conf.get("ignore", {}).items()}
-        linkrule = rules.pop("link", None)
-        contentrule = rules.pop("content", None)
-        
-        def ignore(e):
-            if linkrule and linkrule.search(self.get_link(e)):
+    def ignore(self):
+        if self.feed.ignore_link_rule and self.feed.ignore_link_rule.search(Feed.get_link(self.entry_obj)):
+            return True
+        if self.feed.ignore_content_rule and self.feed.ignore_content_rule.search(self.get_content()):
+            return True
+        for field, rule in self.feed.ignore_rules.items():
+            if rule.search(getattr(self.entry_obj, field)):
                 return True
-            if contentrule and contentrule.search(self.get_entry_content(e)):
-                return True
-            for field, rule in rules.items():
-                if rule.search(getattr(e, field)):
-                    return True
-            return False
-            
-        return ignore
+        return False
     
-    # TODO rename this once entry stuff is factored out
-    def get_feed_content(self, feed_obj):
-        # TODO make a helper for this too
-        title = self.conf.get("title") or feed_obj.feed.title
-        return self.FEEDCONTENT.safe_substitute(feedpageurl=self.get_link(feed_obj.feed), feedtitle=title, feedurl=self.conf["url"])
-    
-    def get_timetuple(self, entry):
-        timetuple = entry.get("published_parsed", entry.get("updated_parsed"))
+    def get_timetuple(self):
+        e = self.entry_obj
+        timetuple = e.get("published_parsed", e.get("updated_parsed"))
         
         if not timetuple:
-            date_raw = entry.get("published", entry.get("updated"))
-            custom_format = self.conf.get("date_format")
+            date_raw = e.get("published", e.get("updated"))
+            custom_format = self.feed.conf.get("date_format")
             
             if date_raw and custom_format:
                 try:
                     timetuple = datetime.strptime(date_raw, custom_format).timetuple()
-                except ValueError as e:
-                    logger.debug("Could not parse publication date in feed %s: %s", self.feed_id, e)
+                except ValueError as err:
+                    logger.debug("Could not parse publication date in feed %s: %s", self.feed.feed_id, err)
                     
         return timetuple
-
-    def get_entry_content(self, entry):
-        thumbnail = None
-        thumb_list = entry.get("media_thumbnail", [])
-        if len(thumb_list):
-            thumbnail = thumb_list[0]
-            small_thumbnail = (thumbnail["width"] == thumbnail["height"] == "72")
-            thumb_str = self.fix_image(self.THUMBNAIL.safe_substitute(thumbnail))
-        
-        entrycontent = []
-        
-        if self.conf.get("full_content", False):
-            if thumbnail and not small_thumbnail:
-                entrycontent.append(thumb_str)
-            
-            content_list = entry.get("content", [])
-            
-            for content in content_list:
-                content_value = content.get("value")
-                content_type = content.get("type")
-                
-                if content_type == "text/html" and content_value:
-                    entrycontent.append(content_value)
-                    break
-            else:
-                entrycontent.append(entry.get("description", ""))
-        else:
-            if thumbnail and small_thumbnail:
-                entrycontent.append(thumb_str)
-            entrycontent.append(entry.get("description", ""))
-        
-        return "".join(entrycontent)
     
-    def get_classes(self):
-        classes = ["feed", self.conf.get("category", "uncategorised")]
-        if "hide" in self.conf:
-            classes.append("hide")
-        return classes
-    
-    def get_link(self, obj):
-        if "link" in obj:
-            return obj.link
-        if "links" in obj:
-            return obj.links[0].href
-        raise ValueError("Could not find link for object.")
-    
+    # TODO this should all be done inside get_content with an already-parsed object
     def fix_video(self, vid_string):
         vid_obj = ET.fromstring(vid_string)
         
@@ -466,6 +315,7 @@ class Feed(TimeZoneMixIn):
         
         return ET.tostring(vid_obj, encoding="unicode")
     
+    # TODO this should all be done inside get_content with an already-parsed object
     def fix_image(self, img_string):
         img_obj = ET.fromstring(img_string)
         
@@ -478,7 +328,7 @@ class Feed(TimeZoneMixIn):
         if width and height:
             numeric_w_h = False
             
-            max_width = self.conf.get("max_img_width")
+            max_width = self.feed.conf.get("max_img_width")
             if max_width:
                 m = self.RESIZE_SRC.search(img_obj.get("src"))
                 if m:
@@ -508,61 +358,49 @@ class Feed(TimeZoneMixIn):
                 img_obj.set("style", f"--aspect-ratio: {aspect_ratio};")
         
         return ET.tostring(img_obj, encoding="unicode")
+
+    def get_content(self):
+        e = self.entry_obj
         
-    def generate(self, parser, out, now):
-        logger.info("Generating feed %s...", self.feed_id)
-        feed_obj = self.get_obj(parser)
+        thumbnail = None
+        thumb_list = e.get("media_thumbnail", [])
+        if len(thumb_list):
+            thumbnail = thumb_list[0]
+            small_thumbnail = (thumbnail["width"] == thumbnail["height"] == "72")
+            thumb_str = self.fix_image(self.THUMBNAIL.safe_substitute(thumbnail))
         
-        # Create ignore filter
-        ignore = self.get_ignore()
+        entrycontent = []
         
-        # Feed title
-        title = self.conf.get("title") or feed_obj.feed.title
-        
-        # Feed classes
-        classes = self.get_classes()
+        if self.feed.conf.get("full_content", False):
+            if thumbnail and not small_thumbnail:
+                entrycontent.append(thumb_str)
             
-        # Write header
-        out.write(self.FEEDHEADER.safe_substitute(feedtitle=title, feedcontent=self.get_feed_content(feed_obj), classes=" ".join(classes)))
-        
-        # Per-feed limits
-        max_num = self.conf.get("max_entry_num", 0)
-        max_age = self.conf.get("max_entry_age", 0)
-        
-        # Feed timezone
-        feed_tz = self.get_timezone() or timezone.utc
-        
-        num_entries = 0
-        
-        # Process entries
-        for i, e in enumerate(feed_obj.entries):
-            try:
-                # Skip ignored
-                if ignore(e):
-                    continue
+            content_list = e.get("content", [])
+            
+            for content in content_list:
+                content_value = content.get("value")
+                content_type = content.get("type")
                 
-                self.write_entry(e, out, now, title, feed_tz, max_age)
-                
-                # Stop if number limit exceeded
-                num_entries += 1
-                if max_num and num_entries > max_num:
-                    break;
-                
-            except (KeyError, AttributeError, ValueError) as err:
-                logger.warning("Couldn't parse entry %s: %s", i, err)
-                logger.debug("Entry keys: %r", " ".join(dict(e).keys()))
-                continue
+                if content_type == "text/html" and content_value:
+                    entrycontent.append(content_value)
+                    break
+            else:
+                entrycontent.append(e.get("description", ""))
+        else:
+            if thumbnail and small_thumbnail:
+                entrycontent.append(thumb_str)
+            entrycontent.append(e.get("description", ""))
         
-        # Write footer
-        out.write(self.FEEDFOOTER)
+        return "".join(entrycontent)
+    
+    def generate(self, out, now, feedtitle, feed_tz, max_age):
+        e = self.entry_obj
         
-    # TODO move the entry stuff to an entry object
-    def write_entry(self, e, out, now, feedtitle, feed_tz, max_age):
         # Default entry classes
         classes = ["entry"]
         
         # Process entry publication date
-        date_tuple = self.get_timetuple(e)
+        date_tuple = self.get_timetuple()
         
         if date_tuple:
             # Naive tuple in UTC (or custom feed tz) -> aware datetime in UTC (or custom feed tz) -> aware datetime in localtime
@@ -570,7 +408,7 @@ class Feed(TimeZoneMixIn):
         else:
             # Fall back to time of feed fetch (bad, but what can you do?)
             date_obj = now
-            logger.warning("Falling back to now as publication date in feed %s.", self.feed_id)
+            logger.warning("Falling back to now as publication date in feed %s.", self.feed.feed_id)
         
         age = now - date_obj
         
@@ -597,7 +435,9 @@ class Feed(TimeZoneMixIn):
         classes_str = " ".join(classes)
         
         # Apply image fixes
-        content = self.get_entry_content(e)
+        # TODO TODO TODO do this all inside get_content with an html object
+        
+        content = self.get_content()
         
         images = self.IMAGE.findall(content)
         for image in images:
@@ -608,11 +448,179 @@ class Feed(TimeZoneMixIn):
             content = content.replace(video, self.fix_video(video))
         
         # Write entry
-        out.write(self.ENTRY.safe_substitute(classes=classes_str, date=date_str, link=self.get_link(e), entrytitle=e.title, entrycontent=content, feedtitle=feedtitle))
+        out.write(self.ENTRY.safe_substitute(classes=classes_str, date=date_str, link=Feed.get_link(e), entrytitle=e.title, entrycontent=content, feedtitle=feedtitle))
+
+
+class Feed:
+    HEADER = Template("""
+<div class="$classes">
+<h1 class="feedtitle">$feedtitle</h1>
+<div class="feedcontent">
+    $feedcontent
+</div>
+<ul>
+""")
+    
+    CONTENT =  Template("""
+<h1 class="feedtitle"><a href="$feedpageurl">$feedtitle</a>: <a class="feedurl" href="$feedurl">$feedurl</a></h1>
+""")
+
+    FOOTER = """
+</ul>
+</div>
+"""
+    
+    IGNORE_TOPLEVEL = {"feeds", "categories", "url", "title", "timezone", "tzoffset"}
+    IGNORE_CATEGORY = {"url", "title", "category", "timezone", "tzoffset"}
+    
+    @staticmethod
+    def get_feeds(main_conf):
+        feeds = []
+        groups = defaultdict(list)
+        
+        for feed_conf in main_conf.get("feeds", []):
+            feed = Feed(main_conf, feed_conf)
+            group = feed.conf.get("group")
+            
+            if group:
+                groups[group].append(feed)
+            else:
+                feeds.append(feed)
+            
+        for group, grouped_feeds in groups.items():
+            feeds.append(Group(grouped_feeds))
+        
+        return [(Digest(feed) if "digest" in feed.conf else feed) for feed in feeds]
+    
+    @staticmethod
+    def get_link(obj):
+        if "link" in obj:
+            return obj.link
+        if "links" in obj:
+            return obj.links[0].href
+        raise ValueError("Could not find link for object.")
+    
+    def __init__(self, main_conf, feed_conf):
+        self.main_conf = main_conf
+        self.orig_conf = feed_conf
+        self.conf = {}
+        self.feed_id = None
+        
+        self.ignore_rules = {}
+        self.ignore_link_rule = None
+        self.ignore_content_rule = None
+        
+        self.calculate_conf()
+        
+    def calculate_conf(self):
+        # Construct combined prefs from top-level, category and feed entries
+        
+        # Clear in place
+        self.conf.clear()
+        
+        # Apply top-level prefs first
+        self.conf.update({k:v for (k, v) in self.main_conf.conf.items() if k not in self.IGNORE_TOPLEVEL})
+        
+        # Then category prefs
+        category = self.orig_conf.get("category", "uncategorised")
+        category_conf = self.main_conf.get("categories", {}).get(category)
+        if category_conf:
+            self.conf.update({k:v for (k, v) in category_conf.items() if k not in self.IGNORE_CATEGORY})
+        
+        # Finally the per-feed prefs
+        self.conf.update(self.orig_conf)
+        
+        self.feed_id = self.conf["url"]
+    
+    def calculate_ignore(self):
+        self.ignore_rules = {field: re.compile(regex) for (field, regex) in self.conf.get("ignore", {}).items()}
+        self.ignore_link_rule = self.ignore_rules.pop("link", None)
+        self.ignore_content_rule = self.ignore_rules.pop("content", None)
+
+    def update_url(self, url):
+        old_url = self.orig_conf["url"]
+        self.orig_conf["url"] = url
+        self.orig_conf["url"].comment(f"# Updated automatically from {old_url}")
+        self.calculate_conf()
+    
+    def disable_url(self):
+        old_url = self.orig_conf["url"]
+        self.orig_conf["url_disabled"] = old_url
+        self.orig_conf["url_disabled"].comment("# This feed is gone and should be removed.")
+        del self.orig_conf["url"]
+        self.calculate_conf()
+        
+    def rename_category(self, old_name, new_name):
+        self.orig_conf["category"] = new_name
+        self.orig_conf["category"].comment(f"# Updated automatically from {old_name}")
+        self.calculate_conf()
+            
+    def get_obj(self, parser):
+        return parser.get_feed_obj(self)
+    
+    def get_content(self, feed_obj):
+        # TODO make a helper for this too
+        title = self.conf.get("title") or feed_obj.feed.title
+        return self.CONTENT.safe_substitute(feedpageurl=Feed.get_link(feed_obj.feed), feedtitle=title, feedurl=self.conf["url"])
+    
+    def get_classes(self):
+        classes = ["feed", self.conf.get("category", "uncategorised")]
+        if "hide" in self.conf:
+            classes.append("hide")
+        return classes
+        
+    def generate(self, parser, out, now):
+        logger.info("Generating feed %s...", self.feed_id)
+        feed_obj = self.get_obj(parser)
+        
+        # Create ignore filter
+        self.calculate_ignore()
+        
+        # Feed title
+        title = self.conf.get("title") or feed_obj.feed.title
+        
+        # Feed classes
+        classes = self.get_classes()
+            
+        # Write header
+        out.write(self.HEADER.safe_substitute(feedtitle=title, feedcontent=self.get_content(feed_obj), classes=" ".join(classes)))
+        
+        # Per-feed limits
+        max_num = self.conf.get("max_entry_num", 0)
+        max_age = self.conf.get("max_entry_age", 0)
+        
+        # Feed timezone
+        feed_tz = Config.get_timezone(self.conf) or timezone.utc
+        
+        num_entries = 0
+        
+        # Process entries
+        for i, e in enumerate(feed_obj.entries):
+            try:
+                entry = Entry(e, self)
+                
+                # Skip ignored
+                if entry.ignore():
+                    continue
+                
+                entry.generate(out, now, title, feed_tz, max_age)
+                
+                # Stop if number limit exceeded
+                num_entries += 1
+                if max_num and num_entries > max_num:
+                    break;
+                
+            except (KeyError, AttributeError, ValueError) as err:
+                logger.warning("Couldn't parse entry %s: %s", i, err)
+                logger.debug("Entry keys: %r", " ".join(dict(e).keys()))
+                continue
+        
+        # Write footer
+        out.write(self.FOOTER)
 
 
 class Group(Feed):
-    FEEDCONTENT =  Template("""
+    CONTENT =  Template("""
 <h1 class="grouptitle">Group: $grouptitle</h1>
 $feeds
 """)
@@ -655,8 +663,8 @@ $feeds
             try:
                 feed_obj = parser.get_feed_obj(feed)
                 feed_objs.append(feed_obj)
-            except ValueError as e:
-                logging.debug(e)
+            except ValueError as err:
+                logging.debug(err)
                 continue
         if not feed_objs:
             raise ValueError("No valid feed found in group %s.", self.feed_id)
@@ -669,22 +677,22 @@ $feeds
         
         for f in feed_objs:
             for e in f.entries:
-                l = self.get_link(e)
+                l = Feed.get_link(e)
                 if l not in seen:
                     entries.append(e)
                     seen.add(l)
         
-        group_obj.entries = sorted(entries, key=lambda e: self.get_timetuple(e), reverse=True)
+        group_obj.entries = sorted(entries, key=lambda e: Entry(e, self).get_timetuple(), reverse=True)
         group_obj.feed_objs = feed_objs
         return group_obj
     
     def get_classes(self):
         return ["group", *super().get_classes()]
     
-    def get_feed_content(self, feed_obj):
+    def get_content(self, feed_obj):
         title = self.conf.get("title") or feed_obj.feed.title
-        feedcontents = "".join(feed.get_feed_content(f_obj) for (feed, f_obj) in zip(self.feeds, feed_obj.feed_objs))
-        return self.FEEDCONTENT.safe_substitute(grouptitle=title, feeds=feedcontents)
+        feedcontents = "".join(feed.get_content(f_obj) for (feed, f_obj) in zip(self.feeds, feed_obj.feed_objs))
+        return self.CONTENT.safe_substitute(grouptitle=title, feeds=feedcontents)
 
 
 class Digest(Feed):
@@ -730,16 +738,19 @@ class Digest(Feed):
         
         digest_conf = self.conf["digest"]
         interval = digest_conf.get("interval", "day")
-        ignore = self.feed.get_ignore()
+        
+        self.calculate_ignore()
         
         # Group entries by interval
         digest_entries = defaultdict(list)
         for e in feed_obj.entries:
+            entry = Entry(e, self)
+            
             # Skip ignored
-            if ignore(e):
+            if entry.ignore():
                 continue
             
-            dt = self.get_timetuple(e)
+            dt = entry.get_timetuple()
             if not dt:
                 logger.debug("Omitting entry from digest in feed %s because a publication date could not be parsed.", self.feed_id)
                 continue
@@ -753,7 +764,7 @@ class Digest(Feed):
             elif interval == "month":
                 key = (dt.tm_year, dt.tm_mon)
             
-            digest_entries[key].append(e)
+            digest_entries[key].append(entry)
             
         if not digest_entries:
             logger.error("Could not create digest for feed %s. Using original feed.", self.feed_id)
@@ -762,16 +773,17 @@ class Digest(Feed):
         # Remove ignore from self (because we ignored before digesting)
         if "ignore" in self.conf:
             del self.conf["ignore"]
+            self.calculate_ignore()
         
         # Process grouped entries into digest entries
         for _, entries in sorted(digest_entries.items(), reverse=True):
             # Oldest first within each digest
             entries.reverse()
             
-            dates = [self.get_timetuple(e) for e in entries]
-            titles = [e.title for e in entries]
-            links = [self.get_link(e) for e in entries]
-            entrycontents = [self.get_entry_content(e) for e in entries]
+            dates = [e.get_timetuple() for e in entries]
+            titles = [e.entry_obj.title for e in entries]
+            links = [Feed.get_link(e.entry_obj) for e in entries]
+            entrycontents = [e.get_content() for e in entries]
             
             digest_e = FakeObj()
             digest_e.published_parsed = [sum(l)//len(l) for l in zip(*dates)]
@@ -808,6 +820,7 @@ class Digest(Feed):
             digest_obj.entries.append(digest_e)
             
         return digest_obj;
+
 
 class Filters:
     FILTER = Template("""
@@ -915,7 +928,7 @@ $cat_filters
         self.filter_path = os.path.join(output_dir, "tonguefilter.css")
         self.output_path = os.path.join(output_dir, "index.html")
         
-        self.conf = MainConfig(self.conf_path)
+        self.conf = Config(self.conf_path)
         self.feeds = Feed.get_feeds(self.conf)
     
     def get_catids(self):
@@ -959,7 +972,7 @@ $cat_filters
         parser = Feedparser(self.cache_dir, no_update, no_new)
             
         # Use a single "now" for the whole run
-        localtz = self.conf.get_timezone()
+        localtz = Config.get_timezone(self.conf.conf)
         if localtz:
             now = datetime.now(localtz)
         else:
@@ -999,8 +1012,8 @@ $cat_filters
             for feed in self.feeds:
                 try:
                     feed.generate(parser, out, now)
-                except ValueError as e:
-                    logging.warning("Skipping feed %s: %s", feed.feed_id, e)
+                except ValueError as err:
+                    logging.warning("Skipping feed %s: %s", feed.feed_id, err)
                     continue
                     
             out.write(self.FOOTER)
