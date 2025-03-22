@@ -256,6 +256,15 @@ class MainConfig(TimeZoneMixIn):
                 f.write(data)
 
 
+class Entry():
+    def __init__(self, entry_obj, feed_conf):
+        self.entry_obj = entry_obj
+        self.feed_conf = feed_conf
+        
+    def generate(self):
+        pass
+
+
 class Feed(TimeZoneMixIn):
     FEEDHEADER = Template("""
 <div class="$classes">
