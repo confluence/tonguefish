@@ -276,6 +276,7 @@ class Entry:
 """)
     
     STYLE = re.compile(r"(.*?):(.*?)(?:;|$)")
+    WXH = re.compile(r"(\d+)x(\d+)")
     
     def __init__(self, entry_obj, feed):
         self.entry_obj = entry_obj
@@ -328,13 +329,35 @@ class Entry:
                 img["src"] = src._replace(query=urllib.parse.urlencode(query, doseq=True)).geturl()
             
             elif "/wp-content/" in src.path:
+                # Redirect to WP cache, otherwise the resizing will not work
+                if src.netloc != "i0.wp.com":
+                    src = src._replace(scheme="https", netloc="i0.wp.com", path=f"{src.netloc}{src.path}")
+                    
                 query = urllib.parse.parse_qs(src.query)
+                
                 if "resize" in query:
                     width, height = (int(n) for n in query["resize"][0].split(","))
-                    if width > max_width:
-                        width, height = max_width, height * max_width / width
                     del query["resize"]
-                query["w"] = max_width
+                
+                elif "w" in query:
+                    width = int(query["w"][0])
+                    
+                elif (width := img.get("width")) and (height := img.get("height")):
+                    try:
+                        width, height = float(width), float(height)
+                    except ValueError:
+                        width = height = None
+                
+                elif m:= self.WXH.search(src.path):
+                    width, height = (int(n) for n in m.groups())
+                    
+                if not width or (width and width > max_width):
+                    if height:
+                        height = height * max_width / width
+                    if width:
+                        width = max_width
+                    query["w"] = max_width
+                
                 img["src"] = src._replace(query=urllib.parse.urlencode(query, doseq=True)).geturl()
             
             if width and height:
