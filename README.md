@@ -191,7 +191,7 @@ hide = 1
 
 ### Prerequisites
 
-`tonguefish` needs Python 3, [`feedparser`](https://feedparser.readthedocs.io/en/latest/), [`tomlkit`](https://tomlkit.readthedocs.io/en/latest/), and [`beautifulsoup4`](https://www.crummy.com/software/BeautifulSoup/bs4/doc/). On Windows you will also need the `tzdata` package if you want to use IANA strings to configure local timezones.
+`tonguefish` needs Python 3, [`feedparser`](https://feedparser.readthedocs.io/en/latest/) and [`tomlkit`](https://tomlkit.readthedocs.io/en/latest/). On Windows you will also need the `tzdata` package if you want to use IANA strings to configure local timezones.
 
 You need to provide an input directory (the default is `./input`), which must contain at minimum a `feeds.toml` file and a copy of or symbolic link to the `tonguefish.css` stylesheet. `tonguefish` also uses an output directory (default: `./output`), a cache directory (default: `./cache`), and a temp directory output(default: `/tmp`).
 

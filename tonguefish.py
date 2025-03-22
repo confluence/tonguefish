@@ -13,6 +13,7 @@ import argparse
 import uuid
 import traceback
 import urllib
+import xml.etree.ElementTree as ET
 
 from string import Template
 from zoneinfo import ZoneInfo
@@ -22,7 +23,6 @@ from collections.abc import MutableMapping
 
 import tomlkit
 import feedparser
-from bs4 import BeautifulSoup as bs
 
 logger = logging.getLogger("tonguefish")
 
@@ -275,12 +275,15 @@ class Entry:
 </a>
 """)
 
+    IMAGE = re.compile("<img .*?/?>")
+    VIDEO = re.compile("<video .*?</video>")
     STYLE = re.compile(r"(.*?):(.*?)(?:;|$)")
     WXH = re.compile(r"(\d+)x(\d+)")
 
     def __init__(self, entry_obj, feed):
         self.entry_obj = entry_obj
         self.feed = feed
+        self._content = None
 
     def ignore(self):
         if self.feed.ignore_link_rule and self.feed.ignore_link_rule.search(Feed.get_link(self.entry_obj)):
@@ -308,14 +311,20 @@ class Entry:
 
         return timetuple
 
-    def fix_video(self, video):
-        # Don't preload videos
-        video["preload"] = "none"
-        del video["autoplay"]
+    def fix_video(self, video_str):
+        video = ET.fromstring(video_str)
 
-    def fix_image(self, img):
+        # Don't preload videos
+        video.set("preload", "none")
+        video.attrib.pop("autoplay", None)
+
+        return ET.tostring(video, encoding="unicode")
+
+    def fix_image(self, img_str):
+        img = ET.fromstring(img_str)
+
         # Load images lazily
-        img["loading"] = "lazy"
+        img.set("loading", "lazy")
 
         # Maybe try fetching a smaller image from the server, and adjust the size
         if max_width := self.feed.conf.get("max_img_width"):
@@ -326,7 +335,7 @@ class Entry:
                 query = urllib.parse.parse_qs(src.query)
                 width, height = max_width, max_width * 9 / 16
                 query["width"] = max_width
-                img["src"] = src._replace(query=urllib.parse.urlencode(query, doseq=True)).geturl()
+                img.set("src", src._replace(query=urllib.parse.urlencode(query, doseq=True)).geturl())
 
             elif "/wp-content/" in src.path:
                 # Redirect to WP cache, otherwise the resizing will not work
@@ -358,10 +367,11 @@ class Entry:
                         width = max_width
                     query["w"] = max_width
 
-                img["src"] = src._replace(query=urllib.parse.urlencode(query, doseq=True)).geturl()
+                img.set("src", src._replace(query=urllib.parse.urlencode(query, doseq=True)).geturl())
 
             if width and height:
-                img["width"], img["height"] = width, height
+                img.set("width", str(width))
+                img.set("height", str(height))
 
         # Maybe set aspect ratio (for correct CSS resizing later)
         width, height = img.get("width"), img.get("height")
@@ -373,47 +383,58 @@ class Entry:
             else:
                 aspect_ratio = height / width
                 style = dict(self.STYLE.findall(img.get("style", "")))
-                style["--aspect-ratio"] = aspect_ratio
-                img["style"] = " ".join(f"{k}: {v};" for k, v in style.items())
+                style["--aspect-ratio"] = str(aspect_ratio)
+                img.set("style", " ".join(f"{k}: {v};" for k, v in style.items()))
         else:
             logger.debug("Couldn't set aspect ratio for width %r and height %r.", width, height)
 
+        return ET.tostring(img, encoding="unicode")
+
     def get_content(self):
+        if self._content:
+            return self._content
+
         e = self.entry_obj
 
         thumbnail = None
-        content = None
 
         for thumb_dict in e.get("media_thumbnail", []):
             small_thumbnail = (thumb_dict["width"] == thumb_dict["height"] == "72")
-            thumbnail = bs(self.THUMBNAIL.safe_substitute(thumb_dict, link=Feed.get_link(e)), 'html.parser').a
+            thumbnail = self.THUMBNAIL.safe_substitute(thumb_dict, link=Feed.get_link(e))
             break
 
+        content_parts = []
+
         if self.feed.conf.get("full_content", False):
+            if thumbnail and not small_thumbnail:
+                content_parts.append(thumbnail)
+
             for content_dict in e.get("content", []):
                 content_value = content_dict.get("value")
                 content_type = content_dict.get("type")
 
                 if content_type == "text/html" and content_value:
-                    content = bs(content_value, 'html.parser')
+                    content_parts.append(content_value)
                     break
             else:
-                content = bs(e.get("description", ""), 'html.parser')
+                content_parts.append(e.get("description", ""))
 
-            if thumbnail and not small_thumbnail:
-                content.insert(0, thumbnail)
         else:
-            content = bs(e.get("description", ""), 'html.parser')
             if thumbnail and small_thumbnail:
-                content.insert(0, thumbnail)
+                content_parts.append(thumbnail)
 
-        for img in content.find_all("img"):
-            self.fix_image(img)
+            content_parts.append(e.get("description", ""))
 
-        for video in content.find_all("video"):
-            self.fix_video(video)
+        content = "".join(content_parts)
 
-        return str(content)
+        for image in self.IMAGE.findall(content):
+            content = content.replace(image, self.fix_image(image))
+
+        for video in self.VIDEO.findall(content):
+            content = content.replace(video, self.fix_video(video))
+
+        self._content = content
+        return self._content
 
     def generate(self, out, now, feedtitle, feed_tz, max_age):
         e = self.entry_obj
