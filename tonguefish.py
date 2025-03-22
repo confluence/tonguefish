@@ -10,8 +10,9 @@ import shutil
 import pickle
 import logging
 import argparse
-import xml.etree.ElementTree as ET
 import uuid
+import traceback
+import urllib
 
 from string import Template
 from zoneinfo import ZoneInfo
@@ -21,6 +22,7 @@ from collections.abc import MutableMapping
 
 import tomlkit
 import feedparser
+from bs4 import BeautifulSoup as bs
 
 logger = logging.getLogger("tonguefish")
 
@@ -268,12 +270,12 @@ class Entry:
 """)
     
     THUMBNAIL = Template("""
-<img src="$url" width="$width" height="$height" />
+<a href="$link">
+    <img src="$url" width="$width" height="$height" />
+</a>
 """)
     
-    IMAGE = re.compile("<img .*?/?>")
-    VIDEO = re.compile("<video .*?</video>")
-    RESIZE_SRC = re.compile("(https?://.*?\?resize=)(\d+)(%2C)(\d+)(.*)")
+    STYLE = re.compile(r"(.*?):(.*?)(?:;|$)")
     
     def __init__(self, entry_obj, feed):
         self.entry_obj = entry_obj
@@ -305,93 +307,90 @@ class Entry:
                     
         return timetuple
     
-    # TODO this should all be done inside get_content with an already-parsed object
-    def fix_video(self, vid_string):
-        vid_obj = ET.fromstring(vid_string)
-        
+    def fix_video(self, video):        
         # Don't preload videos
-        vid_obj.set("preload", "none")
-        vid_obj.attrib.pop("autoplay", None)
-        
-        return ET.tostring(vid_obj, encoding="unicode")
+        video["preload"] = "none"
+        del video["autoplay"]
     
-    # TODO this should all be done inside get_content with an already-parsed object
-    def fix_image(self, img_string):
-        img_obj = ET.fromstring(img_string)
-        
+    def fix_image(self, img):
         # Load images lazily
-        img_obj.set("loading", "lazy")
+        img["loading"] = "lazy"
         
-        width = img_obj.get("width", 0)
-        height = img_obj.get("height", 0)
-        
-        if width and height:
-            numeric_w_h = False
+        # Maybe try fetching a smaller image from the server, and adjust the size
+        if max_width := self.feed.conf.get("max_img_width"):
+            width = height = None
+            src = urllib.parse.urlparse(img.get("src"))
             
-            max_width = self.feed.conf.get("max_img_width")
-            if max_width:
-                m = self.RESIZE_SRC.search(img_obj.get("src"))
-                if m:
-                    pre, w, sep, h, post = m.groups()
-                    w, h = int(w), int(h)
-                    if w > max_width:
-                        w, h = max_width, h * max_width / w
-                    # Fetch resized images from server
-                    img_obj.set("src", f"{pre}{w}{sep}{h}{post}")
-                    
-                    width, height = w, h
-                    img_obj.set("width", str(width))
-                    img_obj.set("height", str(height))
-                    numeric_w_h = True
+            if src.netloc == "images.nebula.tv":
+                query = urllib.parse.parse_qs(src.query)
+                width, height = max_width, max_width * 9 / 16
+                query["width"] = max_width
+                img["src"] = src._replace(query=urllib.parse.urlencode(query, doseq=True)).geturl()
             
-            if not numeric_w_h:
-                try:
-                    width, height = float(width), float(height)
-                    numeric_w_h = True
-                except ValueError:
-                    pass
-                    
-            if numeric_w_h:
-                aspect_ratio = height / width
+            elif "/wp-content/" in src.path:
+                query = urllib.parse.parse_qs(src.query)
+                if "resize" in query:
+                    width, height = (int(n) for n in query["resize"][0].split(","))
+                    if width > max_width:
+                        width, height = max_width, height * max_width / width
+                    del query["resize"]
+                query["w"] = max_width
+                img["src"] = src._replace(query=urllib.parse.urlencode(query, doseq=True)).geturl()
+            
+            if width and height:
+                img["width"], img["height"] = width, height
                 
-                # Set aspect ratio (for correct CSS resizing later)
-                img_obj.set("style", f"--aspect-ratio: {aspect_ratio};")
-        
-        return ET.tostring(img_obj, encoding="unicode")
-
+        # Maybe set aspect ratio (for correct CSS resizing later)
+        width, height = img.get("width"), img.get("height")
+        if width and height:
+            try:
+                width, height = float(width), float(height)
+            except ValueError:
+                logger.debug("Couldn't set aspect ratio for non-numeric width %r and height %r.", width, height)
+            else:
+                aspect_ratio = height / width
+                style = dict(self.STYLE.findall(img.get("style", "")))
+                style["--aspect-ratio"] = aspect_ratio
+                img["style"] = " ".join(f"{k}: {v};" for k, v in style.items())
+        else:
+            logger.debug("Couldn't set aspect ratio for width %r and height %r.", width, height)
+    
     def get_content(self):
         e = self.entry_obj
         
         thumbnail = None
-        thumb_list = e.get("media_thumbnail", [])
-        if len(thumb_list):
-            thumbnail = thumb_list[0]
-            small_thumbnail = (thumbnail["width"] == thumbnail["height"] == "72")
-            thumb_str = self.fix_image(self.THUMBNAIL.safe_substitute(thumbnail))
+        content = None
         
-        entrycontent = []
+        for thumb_dict in e.get("media_thumbnail", []):
+            small_thumbnail = (thumb_dict["width"] == thumb_dict["height"] == "72")
+            thumbnail = bs(self.THUMBNAIL.safe_substitute(thumb_dict, link=Feed.get_link(e)), 'html.parser').a
+            break
         
         if self.feed.conf.get("full_content", False):
-            if thumbnail and not small_thumbnail:
-                entrycontent.append(thumb_str)
-            
-            content_list = e.get("content", [])
-            
-            for content in content_list:
-                content_value = content.get("value")
-                content_type = content.get("type")
+            for content_dict in e.get("content", []):
+                content_value = content_dict.get("value")
+                content_type = content_dict.get("type")
                 
                 if content_type == "text/html" and content_value:
-                    entrycontent.append(content_value)
+                    content = bs(content_value, 'html.parser')
                     break
             else:
-                entrycontent.append(e.get("description", ""))
+                content = bs(e.get("description", ""), 'html.parser')
+            
+            if thumbnail and not small_thumbnail:
+                content.insert(0, thumbnail)
         else:
+            content = bs(e.get("description", ""), 'html.parser')
             if thumbnail and small_thumbnail:
-                entrycontent.append(thumb_str)
-            entrycontent.append(e.get("description", ""))
+                content.insert(0, thumbnail)
         
-        return "".join(entrycontent)
+        for img in content.findAll("img"):
+            self.fix_image(img)
+        
+        for video in content.findAll("video"):
+            self.fix_video(video)
+        
+        return str(content)
     
     def generate(self, out, now, feedtitle, feed_tz, max_age):
         e = self.entry_obj
@@ -434,18 +433,8 @@ class Entry:
         
         classes_str = " ".join(classes)
         
-        # Apply image fixes
-        # TODO TODO TODO do this all inside get_content with an html object
-        
+        # Get content with fixes applied        
         content = self.get_content()
-        
-        images = self.IMAGE.findall(content)
-        for image in images:
-            content = content.replace(image, self.fix_image(image))
-        
-        videos = self.VIDEO.findall(content)
-        for video in videos:
-            content = content.replace(video, self.fix_video(video))
         
         # Write entry
         out.write(self.ENTRY.safe_substitute(classes=classes_str, date=date_str, link=Feed.get_link(e), entrytitle=e.title, entrycontent=content, feedtitle=feedtitle))
@@ -612,7 +601,7 @@ class Feed:
                 
             except (KeyError, AttributeError, ValueError) as err:
                 logger.warning("Couldn't parse entry %s: %s", i, err)
-                logger.debug("Entry keys: %r", " ".join(dict(e).keys()))
+                logger.debug(traceback.format_exc())
                 continue
         
         # Write footer
