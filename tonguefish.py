@@ -407,10 +407,10 @@ class Entry:
             if thumbnail and small_thumbnail:
                 content.insert(0, thumbnail)
 
-        for img in content.findAll("img"):
+        for img in content.find_all("img"):
             self.fix_image(img)
 
-        for video in content.findAll("video"):
+        for video in content.find_all("video"):
             self.fix_video(video)
 
         return str(content)
