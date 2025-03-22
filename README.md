@@ -67,7 +67,7 @@ You can set limits on the maximum age of entries (in days) to be included, and/o
 
 You can set the `full_content` option to include the full text content of each entry, rather than just the summary (by default it's unset). However, there is no consistency in the way that different feeds use these fields: some don't provide the full content, and some put the full content *in* the summary, so either way you will probably see a mixture of content lengths. The option may be more helpful as a per-feed setting.
 
-`tonguefish` recognises some image URLs as being rewritable to request a smaller image size from the server (currently only specific WordPress URLs). Set `max_img_width` to enable this (adjust the value to the typical pixel width of the feed preview area in your browser window).
+`tonguefish` recognises some image URLs as being rewritable to request a smaller image size from the server (currently only WordPress images and Nebula video thumbnails). Set `max_img_width` to enable this (adjust the value to the typical pixel width of the feed preview area in your browser window).
 
 ```toml
 # Set a global limit on the number of entries to include in each feed (0 to disable)
