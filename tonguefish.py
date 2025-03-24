@@ -284,6 +284,7 @@ class Entry:
         self.entry_obj = entry_obj
         self.feed = feed
         self._content = None
+        self._timetuple = None
 
     def ignore(self):
         if self.feed.ignore_link_rule and self.feed.ignore_link_rule.search(Feed.get_link(self.entry_obj)):
@@ -296,20 +297,23 @@ class Entry:
         return False
 
     def get_timetuple(self):
-        e = self.entry_obj
-        timetuple = e.get("published_parsed", e.get("updated_parsed"))
+        if not self._timetuple:
+            e = self.entry_obj
+            timetuple = e.get("published_parsed", e.get("updated_parsed"))
 
-        if not timetuple:
-            date_raw = e.get("published", e.get("updated"))
-            custom_format = self.feed.conf.get("date_format")
+            if not timetuple:
+                date_raw = e.get("published", e.get("updated"))
+                custom_format = self.feed.conf.get("date_format")
 
-            if date_raw and custom_format:
-                try:
-                    timetuple = datetime.strptime(date_raw, custom_format).timetuple()
-                except ValueError as err:
-                    logger.debug("Could not parse publication date in feed %s: %s", self.feed.feed_id, err)
+                if date_raw and custom_format:
+                    try:
+                        timetuple = datetime.strptime(date_raw, custom_format).timetuple()
+                    except ValueError as err:
+                        logger.debug("Could not parse publication date in feed %s: %s", self.feed.feed_id, err)
 
-        return timetuple
+            self._timetuple = timetuple
+
+        return self._timetuple
 
     def fix_video(self, video_str):
         video = ET.fromstring(video_str)
@@ -406,49 +410,47 @@ class Entry:
         return ET.tostring(img, encoding="unicode")
 
     def get_content(self):
-        if self._content:
-            return self._content
+        if not self._content:
+            e = self.entry_obj
 
-        e = self.entry_obj
+            thumbnail = None
 
-        thumbnail = None
+            for thumb_dict in e.get("media_thumbnail", []):
+                small_thumbnail = (thumb_dict["width"] == thumb_dict["height"] == "72")
+                thumbnail = self.THUMBNAIL.safe_substitute(thumb_dict, link=Feed.get_link(e))
+                break
 
-        for thumb_dict in e.get("media_thumbnail", []):
-            small_thumbnail = (thumb_dict["width"] == thumb_dict["height"] == "72")
-            thumbnail = self.THUMBNAIL.safe_substitute(thumb_dict, link=Feed.get_link(e))
-            break
+            content_parts = []
 
-        content_parts = []
+            if self.feed.conf.get("full_content", False):
+                if thumbnail and not small_thumbnail:
+                    content_parts.append(thumbnail)
 
-        if self.feed.conf.get("full_content", False):
-            if thumbnail and not small_thumbnail:
-                content_parts.append(thumbnail)
+                for content_dict in e.get("content", []):
+                    content_value = content_dict.get("value")
+                    content_type = content_dict.get("type")
 
-            for content_dict in e.get("content", []):
-                content_value = content_dict.get("value")
-                content_type = content_dict.get("type")
+                    if content_type == "text/html" and content_value:
+                        content_parts.append(content_value)
+                        break
+                else:
+                    content_parts.append(e.get("description", ""))
 
-                if content_type == "text/html" and content_value:
-                    content_parts.append(content_value)
-                    break
             else:
+                if thumbnail and small_thumbnail:
+                    content_parts.append(thumbnail)
+
                 content_parts.append(e.get("description", ""))
 
-        else:
-            if thumbnail and small_thumbnail:
-                content_parts.append(thumbnail)
+            content = "".join(content_parts)
 
-            content_parts.append(e.get("description", ""))
+            for image in self.IMAGE.findall(content):
+                content = content.replace(image, self.fix_image(image))
 
-        content = "".join(content_parts)
+            for video in self.VIDEO.findall(content):
+                content = content.replace(video, self.fix_video(video))
 
-        for image in self.IMAGE.findall(content):
-            content = content.replace(image, self.fix_image(image))
-
-        for video in self.VIDEO.findall(content):
-            content = content.replace(video, self.fix_video(video))
-
-        self._content = content
+            self._content = content
         return self._content
 
     def generate(self, out, now, feedtitle, feed_tz, max_age):
@@ -642,11 +644,13 @@ class Feed:
 
         num_entries = 0
 
-        # Process entries
-        for i, e in enumerate(feed_obj.entries):
-            try:
-                entry = Entry(e, self)
+        entries = (Entry(e, self) for e in feed_obj.entries)
+        if self.conf.get("sort"):
+            entries = sorted(entries, key=lambda e: e.get_timetuple(), reverse=True)
 
+        # Process entries
+        for i, entry in enumerate(entries):
+            try:
                 # Skip ignored
                 if entry.ignore():
                     continue

@@ -120,6 +120,16 @@ date_format = "%A %b %d %Y %H:%M:%S"
 timezone = "Africa/Johannesburg"
 ```
 
+### Sorting
+
+If a feed isn't sorted newest-first, which is a problem if you want to limit the number of entries, you can enforce this ordering using the `sort` option.
+
+```toml
+[[feeds]]
+url = "https://example.com/randomorder/rss"
+sort = 1
+```
+
 ### Ignore
 
 You can ignore entries that match certain patterns. Currently one regex is allowed per field (you can combine multiple regexes to apply to a single field with `|`). Use `content` to search whatever field `tonguefish` decides to use as the content, and `link` to search whichever link `tonguefish` picks for the entry. Otherwise, any field that `feedparser` understands will be checked directly -- but it may not exist for certain feeds.
