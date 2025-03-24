@@ -287,14 +287,24 @@ class Entry:
         self._timetuple = None
 
     def ignore(self):
-        if self.feed.ignore_link_rule and self.feed.ignore_link_rule.search(Feed.get_link(self.entry_obj)):
+        rules = self.feed.ignore_rules
+        if (rule := rules.pop("link", None)) and rule.search(self.get_link()):
             return True
-        if self.feed.ignore_content_rule and self.feed.ignore_content_rule.search(self.get_content()):
+        if (rule := rules.pop("content", None)) and rule.search(self.get_content()):
             return True
-        for field, rule in self.feed.ignore_rules.items():
+        for field, rule in rules.items():
             if rule.search(getattr(self.entry_obj, field)):
                 return True
         return False
+
+    def get_link(self):
+        return Feed.get_link(self.entry_obj)
+
+    def get_title(self):
+        title = self.entry_obj.title
+        if rule := self.feed.strip_rules.get("title"):
+            title = rule.sub("", title)
+        return title
 
     def get_timetuple(self):
         if not self._timetuple:
@@ -417,7 +427,7 @@ class Entry:
 
             for thumb_dict in e.get("media_thumbnail", []):
                 small_thumbnail = (thumb_dict["width"] == thumb_dict["height"] == "72")
-                thumbnail = self.THUMBNAIL.safe_substitute(thumb_dict, link=Feed.get_link(e))
+                thumbnail = self.THUMBNAIL.safe_substitute(thumb_dict, link=self.get_link())
                 break
 
             content_parts = []
@@ -449,6 +459,9 @@ class Entry:
 
             for video in self.VIDEO.findall(content):
                 content = content.replace(video, self.fix_video(video))
+
+            if rule := self.feed.strip_rules.get("content"):
+                content = rule.sub("", content)
 
             self._content = content
         return self._content
@@ -498,7 +511,7 @@ class Entry:
         content = self.get_content()
 
         # Write entry
-        out.write(self.ENTRY.safe_substitute(classes=classes_str, date=date_str, link=Feed.get_link(e), entrytitle=e.title, entrycontent=content, feedtitle=feedtitle))
+        out.write(self.ENTRY.safe_substitute(classes=classes_str, date=date_str, link=self.get_link(), entrytitle=self.get_title(), entrycontent=content, feedtitle=feedtitle))
 
 
 class Feed:
@@ -557,8 +570,7 @@ class Feed:
         self.feed_id = None
 
         self.ignore_rules = {}
-        self.ignore_link_rule = None
-        self.ignore_content_rule = None
+        self.strip_rules = {}
 
         self.calculate_conf()
 
@@ -582,10 +594,9 @@ class Feed:
 
         self.feed_id = self.conf["url"]
 
-    def calculate_ignore(self):
+    def calculate_entry_rules(self):
         self.ignore_rules = {field: re.compile(regex) for (field, regex) in self.conf.get("ignore", {}).items()}
-        self.ignore_link_rule = self.ignore_rules.pop("link", None)
-        self.ignore_content_rule = self.ignore_rules.pop("content", None)
+        self.strip_rules = {field: re.compile(regex) for (field, regex) in self.conf.get("strip", {}).items()}
 
     def update_url(self, url):
         old_url = self.orig_conf["url"]
@@ -608,10 +619,11 @@ class Feed:
     def get_obj(self, parser):
         return parser.get_feed_obj(self)
 
+    def get_title(self, feed_obj):
+        return self.conf.get("title") or feed_obj.feed.title
+
     def get_content(self, feed_obj):
-        # TODO make a helper for this too
-        title = self.conf.get("title") or feed_obj.feed.title
-        return self.CONTENT.safe_substitute(feedpageurl=Feed.get_link(feed_obj.feed), feedtitle=title, feedurl=self.conf["url"])
+        return self.CONTENT.safe_substitute(feedpageurl=Feed.get_link(feed_obj.feed), feedtitle=self.get_title(feed_obj), feedurl=self.conf["url"])
 
     def get_classes(self):
         classes = ["feed", self.conf.get("category", "uncategorised")]
@@ -624,10 +636,10 @@ class Feed:
         feed_obj = self.get_obj(parser)
 
         # Create ignore filter
-        self.calculate_ignore()
+        self.calculate_entry_rules()
 
         # Feed title
-        title = self.conf.get("title") or feed_obj.feed.title
+        title = self.get_title(feed_obj)
 
         # Feed classes
         classes = self.get_classes()
@@ -742,7 +754,7 @@ $feeds
         return ["group", *super().get_classes()]
 
     def get_content(self, feed_obj):
-        title = self.conf.get("title") or feed_obj.feed.title
+        title = self.get_title(feed_obj)
         feedcontents = "".join(feed.get_content(f_obj) for (feed, f_obj) in zip(self.feeds, feed_obj.feed_objs))
         return self.CONTENT.safe_substitute(grouptitle=title, feeds=feedcontents)
 
@@ -790,7 +802,7 @@ class Digest(Feed):
         digest_conf = self.conf["digest"]
         interval = digest_conf.get("interval", "day")
 
-        self.calculate_ignore()
+        self.calculate_entry_rules()
 
         # Group entries by interval
         digest_entries = defaultdict(list)
@@ -821,19 +833,14 @@ class Digest(Feed):
             logger.error("Could not create digest for feed %s. Using original feed.", self.feed_id)
             return feed_obj
 
-        # Remove ignore from self (because we ignored before digesting)
-        if "ignore" in self.conf:
-            del self.conf["ignore"]
-            self.calculate_ignore()
-
         # Process grouped entries into digest entries
         for _, entries in sorted(digest_entries.items(), reverse=True):
             # Oldest first within each digest
             entries.reverse()
 
             dates = [e.get_timetuple() for e in entries]
-            titles = [e.entry_obj.title for e in entries]
-            links = [Feed.get_link(e.entry_obj) for e in entries]
+            titles = [e.get_title() for e in entries]
+            links = [e.get_link() for e in entries]
             entrycontents = [e.get_content() for e in entries]
 
             digest_e = FakeObj()
@@ -869,6 +876,13 @@ class Digest(Feed):
                 digest_e.link = links[0]
 
             digest_obj.entries.append(digest_e)
+
+        # Remove ignore and strip from self (because we ignore and strip before digesting)
+        if "ignore" in self.conf:
+            del self.conf["ignore"]
+        if "strip" in self.conf:
+            del self.conf["strip"]
+        self.calculate_entry_rules()
 
         return digest_obj
 

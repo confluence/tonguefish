@@ -143,11 +143,24 @@ title = '[Ch]eese'
 content = 'gouda|cheddar|gorgonzola'
 ```
 
+### Strip text
+
+You can strip text from the entry title or entry content using a regular expression. Bear in mind that if the content shown for the feed is HTML, you need to take the HTML structure into account. Absolutely no validation of the resulting HTML is done; use this with care.
+
+```toml
+[[feeds]]
+url = "https://example.com/rss"
+
+[feeds.strip]
+title = '^Annoying Prefix \|'
+content = '<p>Start Of Ad.*End!</p>'
+```
+
 ### Digest
 
 Multiple entries from one feed can be aggregated into digests (hourly, daily, weekly, or monthly). The intended use case is magazines which have no issue feed but post multiple entries for a single issue on one day, or over the course of a month, or webcomics which post a batch of updates at a time. An hourly digest could be useful for a very busy feed.
 
-Ignore rules are applied before the digest aggregation. You can configure rules for extracting an identifier from a field in one of the component entries (entries will be checked until the first match is found) and using it to construct an aggregate link and title. If the oldest entry with this information falls off the end of the feed, the preceding entries which would be in the same digest will be discarded unless you set the `partial` property, which will cause them to be included with the fallback title and URL, which are copied from the first (oldest) item in the digest.
+Ignore rules and stripping rules are applied before the digest aggregation. You can configure rules for extracting an identifier from a field in one of the component entries (entries will be checked until the first match is found) and using it to construct an aggregate link and title. If the oldest entry with this information falls off the end of the feed, the preceding entries which would be in the same digest will be discarded unless you set the `partial` property, which will cause them to be included with the fallback title and URL, which are copied from the first (oldest) item in the digest.
 
 ```toml
 [[feeds]]
