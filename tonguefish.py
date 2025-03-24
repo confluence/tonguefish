@@ -337,6 +337,21 @@ class Entry:
                 query["width"] = max_width
                 img.set("src", src._replace(query=urllib.parse.urlencode(query, doseq=True)).geturl())
 
+            elif src.netloc == "substackcdn.com":
+                if (width := float(img.get("width", 0))) and (height := float(img.get("height", 0))) and width > max_width:
+                    width, height = max_width, height * max_width / width
+
+                    path_parts = src.path.split('/')
+                    params = path_parts[3].split(',')
+
+                    for i, p in enumerate(params):
+                        if p.startswith("w_"):
+                            params[i] = f"w_{max_width}"
+                            break
+
+                    path_parts[3] = ','.join(params)
+                    img.set("src", src._replace(path='/'.join(path_parts)).geturl())
+
             elif "/wp-content/" in src.path:
                 # Redirect to WP cache, otherwise the resizing will not work
                 if src.netloc != "i0.wp.com":
