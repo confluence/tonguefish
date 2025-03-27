@@ -103,6 +103,10 @@ a.feedurl {
     font-weight: normal;
 }
 
+.entryinfo {
+    font-style: italic;
+}
+
 .entrycontent h1.feedtitle, .feedcontent .feedtitle, .grouptitle {
     font-size: 18pt;
     margin-top: 0px;

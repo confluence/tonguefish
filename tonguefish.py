@@ -264,6 +264,7 @@ class Entry:
     <div class="entrycontent">
         <h1 class="feedtitle">$feedtitle</h1>
         <h1 class="entrytitle"><a href="$link">$entrytitle</a></h1>
+        <p class="entryinfo">$entryinfo</p>
         $entrycontent
     </div>
 </li>
@@ -504,14 +505,21 @@ class Entry:
 
         # This will be in localtime
         date_str = date_obj.strftime("%b %d")
+        date_str_full = date_obj.strftime("%d %b %Y, %H:%M:%S")
 
         classes_str = " ".join(classes)
+        
+        infoparts = []
+        if author := e.get("author"):
+            infoparts.append(author)
+        infoparts.append(date_str_full)
+        entryinfo = ", ".join(infoparts)
 
         # Get content with fixes applied
         content = self.get_content()
 
         # Write entry
-        out.write(self.ENTRY.safe_substitute(classes=classes_str, date=date_str, link=self.get_link(), entrytitle=self.get_title(), entrycontent=content, feedtitle=feedtitle))
+        out.write(self.ENTRY.safe_substitute(classes=classes_str, date=date_str, link=self.get_link(), entrytitle=self.get_title(), entryinfo=entryinfo, entrycontent=content, feedtitle=feedtitle))
 
 
 class Feed:
