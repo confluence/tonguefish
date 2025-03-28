@@ -381,9 +381,9 @@ class Entry:
                 elif "w" in query:
                     width = int(query["w"][0])
 
-                elif (width := img.get("width")) and (height := img.get("height")):
+                elif (w := img.get("width")) and (h := img.get("height")):
                     try:
-                        width, height = float(width), float(height)
+                        width, height = float(w), float(h)
                     except ValueError:
                         width = height = None
 
