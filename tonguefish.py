@@ -288,7 +288,7 @@ class Entry:
         self._timetuple = None
 
     def ignore(self):
-        rules = self.feed.ignore_rules
+        rules = dict(self.feed.ignore_rules)
         if (rule := rules.pop("link", None)) and rule.search(self.get_link()):
             return True
         if (rule := rules.pop("content", None)) and rule.search(self.get_content()):
