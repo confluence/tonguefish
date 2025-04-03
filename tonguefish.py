@@ -85,19 +85,23 @@ class TempWriter:
 
 
 class Cache:
-    def __init__(self, cache_dir):
-        self.cache_dir = cache_dir
-        self.seen = set()
+    seen = set()
 
-    def get_cache_url(self, feed_url):
+    @classmethod
+    def configure(cls, cache_dir):
+        cls.cache_dir = cache_dir
+
+    @classmethod
+    def get_cache_url(cls, feed_url):
         url_hash = hashlib.sha1(feed_url.encode("utf-8")).hexdigest()
-        return os.path.join(self.cache_dir, url_hash)
+        return os.path.join(cls.cache_dir, url_hash)
 
-    def get(self, feed_url):
-        cache_url = self.get_cache_url(feed_url)
+    @classmethod
+    def get(cls, feed_url):
+        cache_url = cls.get_cache_url(feed_url)
         logger.debug("Loading cache for url %s from %s...", feed_url, cache_url)
         if os.path.isfile(cache_url):
-            self.seen.add(cache_url)
+            cls.seen.add(cache_url)
 
             with open(cache_url, "rb") as f:
                 feed_obj = pickle.load(f)  # TODO handle pickle version changing
@@ -105,10 +109,11 @@ class Cache:
             return feed_obj
         return None
 
-    def put(self, feed_url, feed_obj, old_feed_url=None):
-        cache_url = self.get_cache_url(feed_url)
+    @classmethod
+    def put(cls, feed_url, feed_obj, old_feed_url=None):
+        cache_url = cls.get_cache_url(feed_url)
         logger.debug("Saving cache for url %s to %s...", feed_url, cache_url)
-        self.seen.add(cache_url)
+        cls.seen.add(cache_url)
 
         # We have to do this to stop pickle from blowing up because SAXParseException contains a closed file-like object
         # https://alligatr.co.uk/blog/valueerror/
@@ -121,102 +126,50 @@ class Cache:
             pickle.dump(feed_obj, f)
 
         if old_feed_url:
-            self.seen.remove(self.get_cache_url(old_feed_url))
+            cls.seen.remove(cls.get_cache_url(old_feed_url))
 
-    def clean(self):
-        for cache_url in glob.glob(os.path.join(self.cache_dir, "*")):
-            if cache_url not in self.seen:
+    @classmethod
+    def clean(cls):
+        for cache_url in glob.glob(os.path.join(cls.cache_dir, "*")):
+            if cache_url not in cls.seen:
                 os.remove(cache_url)
 
 
-class Feedparser:
-    def __init__(self, cache_dir, no_update, no_new):
-        self.cache = Cache(cache_dir)
-        self.no_update = no_update
-        self.no_new = no_new
-
-    def update(self, feed, old_feed_obj=None):
-        url = feed.conf["url"]
-
-        if old_feed_obj:
-            logger.debug("Updating feed %s...", url)
-            etag = old_feed_obj.get("etag")
-            modified = old_feed_obj.get("modified")
-            feed_obj = feedparser.parse(url, etag=etag, modified=modified)
-        else:
-            logger.debug("Fetching new feed %s...", url)
-            feed_obj = feedparser.parse(url)
-
-        if feed_obj.status == 200:
-            logger.info("%s: updated.", url)
-            self.cache.put(url, feed_obj)
-            return feed_obj
-
-        elif old_feed_obj and feed_obj.status == 304:
-            logger.info("%s: no update required.", url)
-            return old_feed_obj
-
-        elif feed_obj.status == 302:
-            new_url = feed_obj.href
-            logger.warning("%s has redirected temporarily to %s. Not editing config.", url, new_url)
-
-            if not feed_obj.feed.keys():
-                # The redirect is probably masking a 304
-                if old_feed_obj:
-                    logger.info("%s: no update required (probably).", url)
-                    logger.debug(feed_obj)
-                    return old_feed_obj
-                raise ValueError("Received empty response with 302 status.")
-
-            self.cache.put(url, feed_obj)
-            return feed_obj
-
-        elif feed_obj.status == 301:
-            new_url = feed_obj.href
-            logger.warning("%s has redirected permanently to %s -- updating config.", url, new_url)
-            feed.update_url(new_url)
-
-            if not feed_obj.feed.keys():
-                # The redirect is probably masking a 304
-                if old_feed_obj:
-                    logger.info("%s: no update required (probably).", url)
-                    logger.debug(feed_obj)
-                    # Save the old object to the new location
-                    self.cache.put(new_url, old_feed_obj, url)
-                    return old_feed_obj
-                raise ValueError("Received empty response with 301 status.")
-
-            self.cache.put(new_url, feed_obj, url)
-            return feed_obj
-
-        elif feed_obj.status == 410:
-            feed.disable_url()
-            raise ValueError(f"{url}: Server returned 410 response (feed is gone).")
-
-        else:
-            raise ValueError(f"{url}: Server returned {feed_obj.status} response.")
-
-    def get_feed_obj(self, feed):
-        if "url" not in feed.conf:
-            raise ValueError("No URL found in feed config.")
-        url = feed.conf["url"]
-
-        feed_obj = self.cache.get(url)
-
-        if feed_obj:
-            if self.no_update:
-                return feed_obj
-            return self.update(feed, feed_obj)
-
-        else:
-            if self.no_new:
-                raise ValueError(f"{url}: Feed is not in cache and fetching of missing feeds is disabled.")
-            return self.update(feed)
-
-
 class Config:
+    @classmethod
+    def configure(cls, file_path):
+        cls.file_path = file_path
+
+        with open(cls.file_path) as f:
+            data = f.read()
+            cls.checksum = hashlib.sha1(data.encode("utf-8")).hexdigest()
+            cls.conf = tomlkit.parse(data)
+
+        # Use a single "now" for the whole run
+        localtz = cls.get_timezone()
+        if localtz:
+            cls.now = datetime.now(localtz)
+        else:
+            # use system time
+            cls.now = datetime.now().astimezone()
+        logger.info("Running tonguefish at %s", cls.now.strftime("%a %d %b %Y, %H:%M"))
+
     @staticmethod
-    def get_timezone(conf):
+    def get_link(obj):
+        if "link" in obj:
+            return obj.link
+        if "links" in obj:
+            return obj.links[0].href
+        raise ValueError("Could not find link for object.")
+
+    @classmethod
+    def get(cls, key, default=None):
+        return cls.conf.get(key, default)
+
+    @classmethod
+    def get_timezone(cls, conf=None):
+        conf = conf or cls.conf
+
         timezone = conf.get("timezone")
         if timezone:
             # IANA string (preferred)
@@ -229,30 +182,24 @@ class Config:
 
         return None
 
-    def __init__(self, file_path):
-        with open(file_path) as f:
-            data = f.read()
-            self.checksum = hashlib.sha1(data.encode("utf-8")).hexdigest()
-            self.conf = tomlkit.parse(data)
+    @classmethod
+    def rename_default_category(cls, old_name, new_name):
+        cls.conf["category"] == new_name
+        cls.conf["category"].comment(f"# Updated automatically from {old_name}")
 
-    def get(self, key, default=None):
-        return self.conf.get(key, default)
+    @classmethod
+    def rename_category_key(cls, old_name, new_name):
+        cls.conf["categories"][new_name] = cls.conf["categories"][old_name]
+        del cls.conf["categories"][old_name]
+        cls.conf["categories"][new_name].comment(f"# Updated automatically from {old_name}")
 
-    def rename_default_category(self, old_name, new_name):
-        self.conf["category"] == new_name
-        self.conf["category"].comment(f"# Updated automatically from {old_name}")
-
-    def rename_category_key(self, old_name, new_name):
-        self.conf["categories"][new_name] = self.conf["categories"][old_name]
-        del self.conf["categories"][old_name]
-        self.conf["categories"][new_name].comment(f"# Updated automatically from {old_name}")
-
-    def save(self, file_path):
-        data = tomlkit.dumps(self.conf)
+    @classmethod
+    def save(cls):
+        data = tomlkit.dumps(cls.conf)
         checksum = hashlib.sha1(data.encode("utf-8")).hexdigest()
-        if checksum != self.checksum:
+        if checksum != cls.checksum:
             logger.warning("Writing out config, which has been modified.")
-            with TempWriter(file_path, "w") as f:
+            with TempWriter(cls.file_path, "w") as f:
                 f.write(data)
 
 
@@ -299,7 +246,7 @@ class Entry:
         return False
 
     def get_link(self):
-        return Feed.get_link(self.entry_obj)
+        return Config.get_link(self.entry_obj)
 
     def get_title(self):
         title = self.entry_obj.title
@@ -467,7 +414,8 @@ class Entry:
             self._content = content
         return self._content
 
-    def generate(self, out, now, feedtitle, feed_tz, max_age):
+    def generate(self, out, feedtitle, feed_tz, max_age):
+        now = Config.now
         e = self.entry_obj
 
         # Default entry classes
@@ -508,7 +456,7 @@ class Entry:
         date_str_full = date_obj.strftime("%d %b %Y, %H:%M:%S")
 
         classes_str = " ".join(classes)
-        
+
         infoparts = []
         if author := e.get("author"):
             infoparts.append(author)
@@ -544,13 +492,25 @@ class Feed:
     IGNORE_TOPLEVEL = {"feeds", "categories", "url", "title", "timezone", "tzoffset"}
     IGNORE_CATEGORY = {"url", "title", "category", "timezone", "tzoffset"}
 
-    @staticmethod
-    def get_feeds(main_conf):
+    @classmethod
+    def configure(cls, action):
+        no_update = False if action == "update" else True
+        no_new = True if action == "generate" else False
+
+        if no_update:
+            logger.info("Will not update existing feeds.")
+
+        if no_new:
+            logger.info("Will not fetch missing feeds.")
+
+        cls.no_update = no_update
+        cls.no_new = no_new
+
         feeds = []
         groups = defaultdict(list)
 
-        for feed_conf in main_conf.get("feeds", []):
-            feed = Feed(main_conf, feed_conf)
+        for feed_conf in Config.get("feeds", []):
+            feed = Feed(feed_conf)
             group = feed.conf.get("group")
 
             if group:
@@ -561,18 +521,9 @@ class Feed:
         for group, grouped_feeds in groups.items():
             feeds.append(Group(grouped_feeds))
 
-        return [(Digest(feed) if "digest" in feed.conf else feed) for feed in feeds]
+        cls.feed_list = [(Digest(feed) if "digest" in feed.conf else feed) for feed in feeds]
 
-    @staticmethod
-    def get_link(obj):
-        if "link" in obj:
-            return obj.link
-        if "links" in obj:
-            return obj.links[0].href
-        raise ValueError("Could not find link for object.")
-
-    def __init__(self, main_conf, feed_conf):
-        self.main_conf = main_conf
+    def __init__(self, feed_conf):
         self.orig_conf = feed_conf
         self.conf = {}
         self.feed_id = None
@@ -589,11 +540,11 @@ class Feed:
         self.conf.clear()
 
         # Apply top-level prefs first
-        self.conf.update({k: v for (k, v) in self.main_conf.conf.items() if k not in self.IGNORE_TOPLEVEL})
+        self.conf.update({k: v for (k, v) in Config.conf.items() if k not in self.IGNORE_TOPLEVEL})
 
         # Then category prefs
         category = self.orig_conf.get("category", "uncategorised")
-        category_conf = self.main_conf.get("categories", {}).get(category)
+        category_conf = Config.get("categories", {}).get(category)
         if category_conf:
             self.conf.update({k: v for (k, v) in category_conf.items() if k not in self.IGNORE_CATEGORY})
 
@@ -624,14 +575,92 @@ class Feed:
         self.orig_conf["category"].comment(f"# Updated automatically from {old_name}")
         self.calculate_conf()
 
-    def get_obj(self, parser):
-        return parser.get_feed_obj(self)
+    def update_obj(self, old_feed_obj=None):
+        url = self.conf["url"]
+
+        if old_feed_obj:
+            logger.debug("Updating feed %s...", url)
+            etag = old_feed_obj.get("etag")
+            modified = old_feed_obj.get("modified")
+            feed_obj = feedparser.parse(url, etag=etag, modified=modified)
+        else:
+            logger.debug("Fetching new feed %s...", url)
+            feed_obj = feedparser.parse(url)
+
+        if feed_obj.status == 200:
+            logger.info("%s: updated.", url)
+            Cache.put(url, feed_obj)
+            return feed_obj
+
+        elif old_feed_obj and feed_obj.status == 304:
+            logger.info("%s: no update required.", url)
+            return old_feed_obj
+
+        elif feed_obj.status == 302:
+            new_url = feed_obj.href
+            logger.warning("%s has redirected temporarily to %s. Not editing config.", url, new_url)
+
+            if not feed_obj.feed.keys():
+                # The redirect is probably masking a 304
+                if old_feed_obj:
+                    logger.info("%s: no update required (probably).", url)
+                    logger.debug(feed_obj)
+                    return old_feed_obj
+                raise ValueError("Received empty response with 302 status.")
+
+            Cache.put(url, feed_obj)
+            return feed_obj
+
+        elif feed_obj.status == 301:
+            new_url = feed_obj.href
+            logger.warning("%s has redirected permanently to %s -- updating config.", url, new_url)
+            self.update_url(new_url)
+
+            if not feed_obj.feed.keys():
+                # The redirect is probably masking a 304
+                if old_feed_obj:
+                    logger.info("%s: no update required (probably).", url)
+                    logger.debug(feed_obj)
+                    # Save the old object to the new location
+                    Cache.put(new_url, old_feed_obj, url)
+                    return old_feed_obj
+                raise ValueError("Received empty response with 301 status.")
+
+            Cache.put(new_url, feed_obj, url)
+            return feed_obj
+
+        elif feed_obj.status == 410:
+            self.disable_url()
+            raise ValueError(f"{url}: Server returned 410 response (feed is gone).")
+
+        else:
+            raise ValueError(f"{url}: Server returned {feed_obj.status} response.")
+
+    def get_obj(self):
+        if "url" not in self.conf:
+            raise ValueError("No URL found in feed config.")
+        url = self.conf["url"]
+
+        feed_obj = Cache.get(url)
+
+        if feed_obj:
+            if self.no_update:
+                return feed_obj
+            return self.update_obj(feed_obj)
+
+        else:
+            if self.no_new:
+                raise ValueError(f"{url}: Feed is not in cache and fetching of missing feeds is disabled.")
+            return self.update_obj()
+
+    def get_link(self, feed_obj):
+        return Config.get_link(feed_obj.feed)
 
     def get_title(self, feed_obj):
         return self.conf.get("title") or feed_obj.feed.title
 
     def get_content(self, feed_obj):
-        return self.CONTENT.safe_substitute(feedpageurl=Feed.get_link(feed_obj.feed), feedtitle=self.get_title(feed_obj), feedurl=self.conf["url"])
+        return self.CONTENT.safe_substitute(feedpageurl=self.get_link(feed_obj), feedtitle=self.get_title(feed_obj), feedurl=self.conf["url"])
 
     def get_classes(self):
         classes = ["feed", self.conf.get("category", "uncategorised")]
@@ -639,9 +668,12 @@ class Feed:
             classes.append("hide")
         return classes
 
-    def generate(self, parser, out, now):
+    def get_feed_timezone(self):
+        return Config.get_timezone(self.conf) or timezone.utc
+
+    def generate(self, out):
         logger.info("Generating feed %s...", self.feed_id)
-        feed_obj = self.get_obj(parser)
+        feed_obj = self.get_obj()
 
         # Create ignore filter
         self.calculate_entry_rules()
@@ -660,7 +692,7 @@ class Feed:
         max_age = self.conf.get("max_entry_age", 0)
 
         # Feed timezone
-        feed_tz = Config.get_timezone(self.conf) or timezone.utc
+        feed_tz = self.get_feed_timezone()
 
         num_entries = 0
 
@@ -675,7 +707,7 @@ class Feed:
                 if entry.ignore():
                     continue
 
-                entry.generate(out, now, title, feed_tz, max_age)
+                entry.generate(out, title, feed_tz, max_age)
 
                 # Stop if number limit exceeded
                 num_entries += 1
@@ -698,6 +730,7 @@ $feeds
 """)
 
     def __init__(self, feeds):
+        self.orig_conf = None  # not applicable
         self.feeds = feeds
         self.conf = {}
         self.feed_id = None
@@ -729,11 +762,15 @@ $feeds
                 feed.rename_category(old_name, new_name)
         self.calculate_conf()
 
-    def get_obj(self, parser):
+    def update_obj(self, old_feed_obj=None):
+        # This should never be called
+        raise NotImplementedError()
+
+    def get_obj(self):
         feed_objs = []
         for feed in self.feeds:
             try:
-                feed_obj = parser.get_feed_obj(feed)
+                feed_obj = feed.get_obj()
                 feed_objs.append(feed_obj)
             except ValueError as err:
                 logging.debug(err)
@@ -749,7 +786,7 @@ $feeds
 
         for f in feed_objs:
             for e in f.entries:
-                l = Feed.get_link(e)
+                l = Config.get_link(e)
                 if l not in seen:
                     entries.append(e)
                     seen.add(l)
@@ -771,7 +808,7 @@ class Digest(Feed):
     def __init__(self, feed):
         self.feed = feed
         self.conf = {}
-        self.feed_id = None
+        self.feed_id = feed.feed_id
         self.calculate_conf()
 
     def calculate_conf(self):
@@ -782,8 +819,6 @@ class Digest(Feed):
 
         # Update from base feed
         self.conf.update(self.feed.conf)
-
-        self.feed_id = self.feed.feed_id
 
     def update_url(self, url):
         self.feed.update_url(url)
@@ -800,8 +835,8 @@ class Digest(Feed):
     def get_classes(self):
         return ["digest", *self.feed.get_classes()]
 
-    def get_obj(self, parser):
-        feed_obj = parser.get_feed_obj(self.feed)
+    def get_obj(self):
+        feed_obj = super().get_obj()
 
         digest_obj = FakeObj()
         digest_obj.feed.title = feed_obj.feed.title
@@ -895,64 +930,6 @@ class Digest(Feed):
         return digest_obj
 
 
-class Filters:
-    FILTER = Template("""
-<input type="radio" id="$id" name="$name" $checked />
-<label for="$id">$label</label>
-""")
-
-    ENTRYFILTERCSSRULES = Template("""
-#filters:has(#$id:checked)~#main li:not(.$id) {
-    display: none;
-}
-
-#filters:has(#$id:checked)~#main div.feed:not(:has(li.$id)) {
-    display: none;
-}
-""")
-
-    FEEDFILTERCSSRULES = Template("""
-#filters:has(#$id:checked)~#main div.feed:not(.$id) {
-    display: none;
-}
-""")
-
-    AGELABELS = ("Today", "This week", "This month", "This year")
-
-    def __init__(self, catids):
-        # Age inputs
-        ageids = []
-        ages = [{"name": "agefilter", "id": "allages", "label": "All ages", "checked": "checked"}]
-        for agelabel in self.AGELABELS:
-            ageid = agelabel.replace(" ", "").lower()
-            ageids.append(ageid)
-            ages.append({"name": "agefilter", "id": ageid, "label": agelabel, "checked": ""})
-
-        # Age input html
-        self.age_filters = "\n".join(self.FILTER.safe_substitute(a) for a in ages)
-
-        # Age CSS
-        self.age_filter_css = "".join(self.ENTRYFILTERCSSRULES.safe_substitute({"id": fi}) for fi in ageids)
-
-        # Category inputs
-        categories = [{"name": "catfilter", "id": "allcats", "label": "All categories", "checked": "checked"}]
-        for catid in sorted(catids):
-            catlabel = catid.replace("_", " ").capitalize()
-            categories.append({"name": "catfilter", "id": catid, "label": catlabel, "checked": ""})
-
-        # Category input HTML
-        self.cat_filters = "\n".join(self.FILTER.safe_substitute(c) for c in categories)
-
-        # Category CSS
-        self.cat_filter_css = "".join(self.FEEDFILTERCSSRULES.safe_substitute({"id": fi}) for fi in catids)
-
-    def write_css(self, file_path):
-        logger.info("Writing generated CSS for filter rules.")
-        with TempWriter(file_path, "w") as f:
-            f.write(self.age_filter_css)
-            f.write(self.cat_filter_css)
-
-
 class Tonguefish:
     HEADER = Template("""
 <!doctype html>
@@ -985,46 +962,80 @@ $cat_filters
 <link rel="icon" href="$favicon"/>
 """)
 
+    FILTER = Template("""
+<input type="radio" id="$id" name="$name" $checked />
+<label for="$id">$label</label>
+""")
+
+    AGELABELS = ("Today", "This week", "This month", "This year")
+
+    ENTRYFILTERCSSRULES = Template("""
+#filters:has(#$id:checked)~#main li:not(.$id) {
+    display: none;
+}
+
+#filters:has(#$id:checked)~#main div.feed:not(:has(li.$id)) {
+    display: none;
+}
+""")
+
+    FEEDFILTERCSSRULES = Template("""
+#filters:has(#$id:checked)~#main div.feed:not(.$id) {
+    display: none;
+}
+""")
+
     FOOTER = """
 </div>
 </body>
 </html>
 """
 
-    def __init__(self, input_dir, output_dir, cache_dir):
+    def __init__(self, input_dir, output_dir):
         self.input_dir = input_dir
         self.output_dir = output_dir
-        self.cache_dir = cache_dir
 
-        self.conf_path = os.path.join(input_dir, "feeds.toml")
         self.stylesheet_paths = glob.glob(os.path.join(self.input_dir, "*.css"))
         self.favicon_paths = glob.glob(os.path.join(self.input_dir, "favicon.*"))
         self.filter_path = os.path.join(output_dir, "tonguefilter.css")
         self.output_path = os.path.join(output_dir, "index.html")
 
-        self.conf = Config(self.conf_path)
-        self.feeds = Feed.get_feeds(self.conf)
+    def generate_age_filters(self):
+        ageids = []
+        ages = [{"name": "agefilter", "id": "allages", "label": "All ages", "checked": "checked"}]
+        for agelabel in self.AGELABELS:
+            ageid = agelabel.replace(" ", "").lower()
+            ageids.append(ageid)
+            ages.append({"name": "agefilter", "id": ageid, "label": agelabel, "checked": ""})
 
-    def get_catids(self):
+        # Age input html
+        filter_html = "\n".join(self.FILTER.safe_substitute(a) for a in ages)
+
+        # Age CSS
+        filter_css = "".join(self.ENTRYFILTERCSSRULES.safe_substitute({"id": fi}) for fi in ageids)
+
+        return filter_html, filter_css
+
+    def generate_cat_filters(self):
         # Characters to remove from category names
         CATIDREMOVE = re.compile("^[^a-zA-Z_]*|[^a-zA-Z_0-9]")
 
         catids = set()
 
-        oldcatid = self.conf.get("category")
+        oldcatid = Config.get("category")
         if oldcatid:
             catid = CATIDREMOVE.sub("", oldcatid.replace(" ", "_"))
             if catid != oldcatid:
                 logger.warning("Invalid default category name %s. Correcting to %s.", oldcatid, catid)
-                self.conf.rename_default_category(oldcatid, catid)
+                Config.rename_default_category(oldcatid, catid)
 
-        for oldcatid in self.conf.get("categories", {}).keys():
+        for oldcatid in Config.get("categories", {}).keys():
             catid = CATIDREMOVE.sub("", oldcatid.replace(" ", "_"))
             if catid != oldcatid:
                 logger.warning("Invalid category name %s in categories. Correcting to %s.", oldcatid, catid)
-                self.conf.rename_category_key(oldcatid, catid)
+                Config.rename_category_key(oldcatid, catid)
 
-        for feed in self.feeds:
+        for feed in Feed.feed_list:
             oldcatid = feed.conf.get("category")
             if oldcatid:
                 catid = CATIDREMOVE.sub("", oldcatid.replace(" ", "_"))
@@ -1035,24 +1046,24 @@ $cat_filters
             else:
                 catids.add("uncategorised")
 
-        return catids
+        categories = [{"name": "catfilter", "id": "allcats", "label": "All categories", "checked": "checked"}]
+        for catid in sorted(catids):
+            catlabel = catid.replace("_", " ").capitalize()
+            categories.append({"name": "catfilter", "id": catid, "label": catlabel, "checked": ""})
 
-    def generate(self, no_update, no_new):
+        # Category input HTML
+        filter_html = "\n".join(self.FILTER.safe_substitute(c) for c in categories)
+
+        # Category CSS
+        filter_css = "".join(self.FEEDFILTERCSSRULES.safe_substitute({"id": fi}) for fi in catids)
+
+        return filter_html, filter_css
+
+    def generate(self):
         # Bail early if no feeds configured
-        if not self.feeds:
+        if not Feed.feed_list:
             logger.warning("No feeds configured. Nothing to do.")
             sys.exit(0)
-
-        parser = Feedparser(self.cache_dir, no_update, no_new)
-
-        # Use a single "now" for the whole run
-        localtz = Config.get_timezone(self.conf.conf)
-        if localtz:
-            now = datetime.now(localtz)
-        else:
-            # use system time
-            now = datetime.now().astimezone()
-        logger.info("Running tonguefish at %s", now.strftime("%a %d %b %Y, %H:%M"))
 
         # Copy input stylesheets and favicons
         os.makedirs(self.output_dir, exist_ok=True)
@@ -1063,12 +1074,17 @@ $cat_filters
                 pass  # File is the same
 
         # Create filters for entry ages and feed categories
-        filters = Filters(self.get_catids())
+        age_filters, age_filter_css = self.generate_age_filters()
+        cat_filters, cat_filter_css = self.generate_cat_filters()
+
         # Write the CSS
-        filters.write_css(self.filter_path)
+        logger.info("Writing generated CSS for filter rules.")
+        with TempWriter(self.filter_path, "w") as f:
+            f.write(age_filter_css)
+            f.write(cat_filter_css)
 
         # Refresh interval
-        refresh_interval = self.conf.get("refresh_interval", 0)
+        refresh_interval = Config.get("refresh_interval", 0)
         refresh = self.REFRESH.safe_substitute(interval=refresh_interval) if refresh_interval else ""
 
         # Generate stylesheet links
@@ -1078,22 +1094,19 @@ $cat_filters
         favicons = "\n".join(self.FAVICON.safe_substitute(favicon=os.path.basename(s)) for s in self.favicon_paths)
 
         # Generate page header
-        header = self.HEADER.safe_substitute(refresh=refresh, stylesheets=stylesheets, favicons=favicons, age_filters=filters.age_filters, cat_filters=filters.cat_filters)
+        header = self.HEADER.safe_substitute(refresh=refresh, stylesheets=stylesheets, favicons=favicons, age_filters=age_filters, cat_filters=cat_filters)
 
         with TempWriter(self.output_path, "w") as out:
             out.write(header)
 
-            for feed in self.feeds:
+            for feed in Feed.feed_list:
                 try:
-                    feed.generate(parser, out, now)
+                    feed.generate(out)
                 except ValueError as err:
                     logging.warning("Skipping feed %s: %s", feed.feed_id, err)
                     continue
 
             out.write(self.FOOTER)
-
-        parser.cache.clean()
-        self.conf.save(self.conf_path)
 
 
 if __name__ == "__main__":
@@ -1114,20 +1127,18 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=log_level)
 
-    no_update = False if args.action == "update" else True
-    no_new = True if args.action == "generate" else False
-
-    if no_update:
-        logger.info("Will not update existing feeds.")
-
-    if no_new:
-        logger.info("Will not fetch missing feeds.")
-
     TempWriter.configure(args.temp_dir)
+    Config.configure(os.path.join(args.input_dir, "feeds.toml"))
+    Cache.configure(args.cache_dir)
+    Feed.configure(args.action)
 
-    tonguefish = Tonguefish(args.input_dir, args.output_dir, args.cache_dir)
-    tonguefish.generate(no_update, no_new)
+    tonguefish = Tonguefish(args.input_dir, args.output_dir)
+    tonguefish.generate()
 
     # Remove the temp directory if the generation was successful.
     # The output of interrupted runs is not removed, by design.
     TempWriter.clean()
+    # Remove unused files from cache
+    Cache.clean()
+    # Save modified config
+    Config.save()
