@@ -211,7 +211,6 @@ class Entry:
     <div class="entrycontent">
         <h1 class="feedtitle">$feedtitle</h1>
         <h1 class="entrytitle"><a href="$link">$entrytitle</a></h1>
-        <p class="entryinfo">$entryinfo</p>
         $entrycontent
     </div>
 </li>
@@ -221,6 +220,10 @@ class Entry:
 <a href="$link">
     <img src="$url" width="$width" height="$height" />
 </a>
+""")
+
+    INFO = Template("""
+<p class="entryinfo">$entryinfo</p>
 """)
 
     IMAGE = re.compile("<img .*?/?>")
@@ -233,6 +236,7 @@ class Entry:
         self.feed = feed
         self._content = None
         self._timetuple = None
+        self._date_obj = None
 
     def ignore(self):
         rules = dict(self.feed.ignore_rules)
@@ -272,6 +276,21 @@ class Entry:
             self._timetuple = timetuple
 
         return self._timetuple
+
+    def get_date_obj(self):
+        if not self._date_obj:
+            now = Config.now
+            date_tuple = self.get_timetuple()
+
+            if date_tuple:
+                # Naive tuple in UTC (or custom feed tz) -> aware datetime in UTC (or custom feed tz) -> aware datetime in localtime
+                self._date_obj = datetime.fromtimestamp(calendar.timegm(date_tuple), self.feed.get_timezone()).astimezone(now.tzinfo)
+            else:
+                # Fall back to time of feed fetch (bad, but what can you do?)
+                self._date_obj = now
+                logger.warning("Falling back to now as publication date in feed %s.", self.feed.feed_id)
+
+        return self._date_obj
 
     def fix_video(self, video_str):
         video = ET.fromstring(video_str)
@@ -371,14 +390,21 @@ class Entry:
         if not self._content:
             e = self.entry_obj
 
+            content_parts = []
+
+            infoparts = []
+            if author := e.get("author"):
+                infoparts.append(author)
+            infoparts.append(self.get_date_obj().strftime("%d %b %Y, %H:%M:%S"))
+            entryinfo = ", ".join(infoparts)
+            content_parts.append(self.INFO.safe_substitute(entryinfo=entryinfo))
+
             thumbnail = None
 
             for thumb_dict in e.get("media_thumbnail", []):
                 small_thumbnail = (thumb_dict["width"] == thumb_dict["height"] == "72")
                 thumbnail = self.THUMBNAIL.safe_substitute(thumb_dict, link=self.get_link())
                 break
-
-            content_parts = []
 
             if self.feed.conf.get("full_content", False):
                 if thumbnail and not small_thumbnail:
@@ -414,25 +440,14 @@ class Entry:
             self._content = content
         return self._content
 
-    def generate(self, out, feedtitle, feed_tz, max_age):
-        now = Config.now
-        e = self.entry_obj
-
+    def generate(self, out, feedtitle, max_age):
         # Default entry classes
         classes = ["entry"]
 
         # Process entry publication date
-        date_tuple = self.get_timetuple()
+        date_obj = self.get_date_obj()
 
-        if date_tuple:
-            # Naive tuple in UTC (or custom feed tz) -> aware datetime in UTC (or custom feed tz) -> aware datetime in localtime
-            date_obj = datetime.fromtimestamp(calendar.timegm(date_tuple), feed_tz).astimezone(now.tzinfo)
-        else:
-            # Fall back to time of feed fetch (bad, but what can you do?)
-            date_obj = now
-            logger.warning("Falling back to now as publication date in feed %s.", self.feed.feed_id)
-
-        age = now - date_obj
+        age = Config.now - date_obj
 
         if max_age and age.days > max_age:
             return
@@ -453,21 +468,14 @@ class Entry:
 
         # This will be in localtime
         date_str = date_obj.strftime("%b %d")
-        date_str_full = date_obj.strftime("%d %b %Y, %H:%M:%S")
 
         classes_str = " ".join(classes)
-
-        infoparts = []
-        if author := e.get("author"):
-            infoparts.append(author)
-        infoparts.append(date_str_full)
-        entryinfo = ", ".join(infoparts)
 
         # Get content with fixes applied
         content = self.get_content()
 
         # Write entry
-        out.write(self.ENTRY.safe_substitute(classes=classes_str, date=date_str, link=self.get_link(), entrytitle=self.get_title(), entryinfo=entryinfo, entrycontent=content, feedtitle=feedtitle))
+        out.write(self.ENTRY.safe_substitute(classes=classes_str, date=date_str, link=self.get_link(), entrytitle=self.get_title(), entrycontent=content, feedtitle=feedtitle))
 
 
 class Feed:
@@ -668,7 +676,7 @@ class Feed:
             classes.append("hide")
         return classes
 
-    def get_feed_timezone(self):
+    def get_timezone(self):
         return Config.get_timezone(self.conf) or timezone.utc
 
     def generate(self, out):
@@ -691,9 +699,6 @@ class Feed:
         max_num = self.conf.get("max_entry_num", 0)
         max_age = self.conf.get("max_entry_age", 0)
 
-        # Feed timezone
-        feed_tz = self.get_feed_timezone()
-
         num_entries = 0
 
         entries = (Entry(e, self) for e in feed_obj.entries)
@@ -707,7 +712,7 @@ class Feed:
                 if entry.ignore():
                     continue
 
-                entry.generate(out, title, feed_tz, max_age)
+                entry.generate(out, title, max_age)
 
                 # Stop if number limit exceeded
                 num_entries += 1
