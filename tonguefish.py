@@ -892,7 +892,7 @@ class Digest(Feed):
             entrycontents = [e.get_content() for e in entries]
 
             digest_e = FakeObj()
-            digest_e.published_parsed = [sum(l)//len(l) for l in zip(*dates)]
+            digest_e.published_parsed = [max(l) for l in zip(*dates)]
             digest_e.description = "\n".join(f'<h1><a href="{l}">{t}</a></h1>\n{d}' for t, l, d in zip(titles, links, entrycontents))
 
             # Try to generate title and link
