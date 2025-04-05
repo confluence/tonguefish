@@ -382,7 +382,6 @@ I hacked this together in a couple of days, and it's very alpha, but it's usable
 
 **Display**
 
-* Maybe rethink current interaction of group and digest (it would make more sense to apply a group digest to a group)
 * Incorporation of more data from feeds and entries (e.g. direct links to media) and more information about current feed configuration
 * Style improvements
 * More feed customisation options
