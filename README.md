@@ -34,7 +34,9 @@ Parsed feed objects are pickled and saved in a cache. `tonguefish` attempts to u
 
 ## Basic feed configuration
 
-Feeds are listed in a TOML AoT (array of tables). Each table in the array must at minimum contain a URL. A feed can have exactly one category and/or exactly one group (see below). Please refer to the [TOML documentation](https://toml.io/en/latest) for an overview of the TOML syntax.
+Please refer to the [TOML documentation](https://toml.io/en/latest) for an overview of the TOML syntax.
+
+Feeds are listed in a TOML AoT (array of tables).
 
 ```toml
 [[feeds]]
@@ -42,7 +44,9 @@ url = "https://example.com/rss"
 category = "blog"
 ```
 
-Most feed options can be specified globally (at the top level), in a category section, in a group section, or in a single feed (although some of these options may not make sense). Precedence and edge cases are documented in more detail below.
+Most feed options can be specified globally (at the top level), in a category section, in a group section, or in a single feed (although some of these options may not make sense).
+
+A more specific option will take precedence over a more general one. The usual order of precedence is: feed, group, category, global. Exceptions and edge cases are documented in more detail below.
 
 Category and group keys may only contain lowercase letters and underscores. Category and group names used elsewhere in the confguration are normalized to this format when they are matched to keys: spaces are replaced with underscores and other characters are removed.
 
@@ -53,6 +57,16 @@ max_entry_num = 20
 [categories.blog.digest]
 interval = "week"
 ```
+
+### URL
+
+Each table in the `feeds` array must contain an URL. This property can only be set at the feed level. Tonguefish automatically updates the configuration if a feed moves permanently or is removed permanently.
+
+### Category
+
+A feed may have exactly one category. This property can be set at the feed, group or global level, but a category cannot be set at the category level.
+
+A group category must be set at the group level. Categories set on individual feeds in the group will be ignored.
 
 ## Transformations
 
@@ -92,6 +106,8 @@ max_entry_age = 0
 full_content = 0
 ```
 
+These properties can be set at any level. `full_content` and `max_img_width` are applied when the original entry content is generated. `max_entry_age` is applied when the final entries are filtered. `max_entry_num` is applied to the final entries after all other filtering.
+
 ### Title
 
 The feed can be renamed.
@@ -101,6 +117,8 @@ The feed can be renamed.
 url = "https://example.com/rss"
 title = "Cool Example Feed"
 ```
+
+This property cannot be set at the top level. In a category or group section, `title` sets the display name for the category or group. It is applied when the original entry content is generated.
 
 ### Bad dates
 
@@ -115,6 +133,8 @@ date_format = "%A %b %d %Y %H:%M:%S"
 timezone = "Africa/Johannesburg"
 ```
 
+These properties can also be set at the group level. They are applied when the original entry content is generated.
+
 ### Sorting
 
 If a feed isn't sorted newest-first, which is a problem if you want to limit the number of entries, you can enforce this ordering using the `sort` option.
@@ -124,6 +144,8 @@ If a feed isn't sorted newest-first, which is a problem if you want to limit the
 url = "https://example.com/randomorder/rss"
 sort = 1
 ```
+
+This property can be set at any level. It is applied when the final entries are generated, before the number limit is applied. Digests always sort the original entries.
 
 ### Ignore
 
@@ -140,6 +162,8 @@ title = '[Ch]eese'
 content = 'gouda|cheddar|gorgonzola'
 ```
 
+This property can be set at any level. It is applied after the original entries are generated.
+
 ### Strip text
 
 You can strip text from the entry title or entry content using a regular expression. Bear in mind that if the content shown for the feed is HTML, you need to take the HTML structure into account. The format of the strip rules is the same as the format for the ignore rules. Absolutely no validation of the resulting HTML is done; use this with care.
@@ -153,11 +177,13 @@ title = '^Annoying Prefix \|'
 content = '<p>Start Of Ad.*End!</p>'
 ```
 
+This property can be set at any level. It is applied when the original entry content is generated.
+
 ### Digest
 
 Multiple entries from one feed can be aggregated into digests (hourly, daily, weekly, or monthly). The intended use case is magazines which have no issue feed but post multiple entries for a single issue on one day, or over the course of a month, or webcomics which post a batch of updates at a time. An hourly digest could be useful for a very busy feed.
 
-Ignore rules and stripping rules are applied before the digest aggregation. You can configure rules for extracting an identifier from a field in one of the component entries (entries will be checked until the first match is found) and using it to construct an aggregate link and title. If the oldest entry with this information falls off the end of the feed, the preceding entries which would be in the same digest will be discarded unless you set the `partial` property, which will cause them to be included with the fallback title and URL, which are copied from the first (oldest) item in the digest.
+You can configure rules for extracting an identifier from a field in one of the component entries (entries will be checked until the first match is found) and using it to construct an aggregate link and title. If the oldest entry with this information falls off the end of the feed, the preceding entries which would be in the same digest will be discarded unless you set the `partial` property, which will cause them to be included with the fallback title and URL, which are copied from the first (oldest) item in the digest.
 
 ```toml
 [[feeds]]
@@ -177,13 +203,13 @@ link = 'https://example.com/magazine/issues/\1/'
 title = 'Issue \1'
 ```
 
+This property can be set at any level, but individual feeds inside a group don't inherit digest settings from the group (or digest settings that the group has inherited) -- those settings are applied to the whole group feed. If you really want to apply a digest to a single feed inside a group, it must be specified at the feed level.
+
+Single feed digests are applied after the original feed entries are generated. Group digests are applied after the group entries are aggregated.
+
 ### Group
 
 Entries from multiple feeds can be aggregated into a single feed. The intended use case is grouping individual account feeds from a website which does not offer a single feed for all your subscriptions.
-
-`title`, and `digest` preferences set in the group section are applied to the combined group feed only and not inherited by individual feeds in the group. The group category must be set in the group section; categories set in individual feeds will be ignored.
-
-Other per-group properties (such as ignore rules) set in this section will be merged into the individual feed preferences.
 
 ```toml
 [[feeds]]
@@ -204,6 +230,14 @@ title = "Cool example feeds"
 category = "media" 
 ```
 
+The group property can only be set at the feed level, and is invalid everywhere else.
+
+`title` and `digest` preferences set in the group section are applied to the combined group feed only and not inherited by individual feeds in the group. The group category must be set in the group section; categories set in individual feeds will be ignored.
+
+Other properties (such as ignore rules) set at the group level will be merged into the individual feed preferences.
+
+Group entries are aggregated after original feed entries have been generated and after any individual feed digests have been applied.
+
 ### Hide
 
 You can prevent a feed from appearing in the main `All categories` view (you can still see it if you select the category it belongs to). It makes the most sense to do this for an entire category.
@@ -213,16 +247,7 @@ You can prevent a feed from appearing in the main `All categories` view (you can
 hide = 1
 ```
 
-## Details
-
-### Option precedence
-
-A more specific option will take precedence over a more general one. The usual order of precedence is:
-
-1. Feed
-2. Group
-3. Category
-4. Global
+This property is valid at any level. It will only affect a group if it is set at the group level or above. 
 
 ### Order of transformations
 
@@ -235,16 +260,6 @@ A more specific option will take precedence over a more general one. The usual o
 7. Group digests are generated
 8. `max_entry_age` limits are applied
 9. `max_entry_num` limits are applied
-
-### Edge cases and exceptions
-
-1. `url` can only be set per feed.
-2. `title` cannot be set at the top level. In a category or group section, `title` sets the display name for the category or group.
-3. `timezone` and `tzoffset` are used to set your local time at the top level, a feed's local time at the feed or group level, and are ignored at the category level.
-4. You can't set a category at the category level. You can, however, set a default category at the top level (which will replace `uncategorised`). You can set a category at group level (and this is the only way to place a group in a category).
-5. You can't set a group at the top level, category level, or group level.
-6. Because a group is functionally a single feed, some per-feed preferences will be ignored for groups, e.g. `max_entry_num` or `category`.
-7. A digest set at the group level will be applied to the whole group, and not inherited by individual groups.
 
 ## How to use
 

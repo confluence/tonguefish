@@ -215,7 +215,7 @@ class Config:
 
             if group := feed_conf.get("group"):
                 # If this feed is in a group, start with the shared group conf
-                conf.update(cls.get_group_conf(group, for_feed=True))
+                conf.update({k: v for (k, v) in cls.get_group_conf(group).items() if k not in cls.IGNORE_FROM_GROUP})
 
                 # Ignore per-feed category later
                 FEED_EXCLUDE |= {"category"}
@@ -245,8 +245,7 @@ class Config:
         return feed_confs
 
     @classmethod
-    def get_group_conf(cls, group, for_feed=False):
-        GROUP_EXCLUDE = cls.IGNORE_FROM_GROUP | cls.TOPLEVEL_ONLY if for_feed else cls.TOPLEVEL_ONLY
+    def get_group_conf(cls, group):
         # First the defaults
         conf = dict(cls.DEFAULTS)
 
@@ -265,7 +264,7 @@ class Config:
 
         # Then the per-group prefs
         if group_conf:
-            conf.update({k: v for (k, v) in group_conf.items() if k not in GROUP_EXCLUDE})
+            conf.update({k: v for (k, v) in group_conf.items() if k not in cls.TOPLEVEL_ONLY})
 
         # Then apply the fixed category on top
         conf["category"] = category
