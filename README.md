@@ -42,7 +42,7 @@ url = "https://example.com/rss"
 category = "blog"
 ```
 
-Most feed options can be specified globally (at the top level), in a category section, in a group section, or in a single feed (although some of these options may not make sense). Please refer to the precedence and edge cases documentation below.
+Most feed options can be specified globally (at the top level), in a category section, in a group section, or in a single feed (although some of these options may not make sense). Precedence and edge cases are documented in more detail below.
 
 Category and group keys may only contain lowercase letters and underscores. Category and group names used elsewhere in the confguration are normalized to this format when they are matched to keys: spaces are replaced with underscores and other characters are removed.
 
@@ -181,7 +181,9 @@ title = 'Issue \1'
 
 Entries from multiple feeds can be aggregated into a single feed. The intended use case is grouping individual account feeds from a website which does not offer a single feed for all your subscriptions.
 
-A display title for the group can be set in the `groups` table of the configuration. Other per-group properties (such as category, ignore or digest rules) set in this section will be merged into the feed preferences (they will be applied after per-category preferences but before per-feed preferences). Preferences set on individual feeds in the group will be applied only to those feeds, as usual.
+`title`, and `digest` preferences set in the group section are applied to the combined group feed only and not inherited by individual feeds in the group. The group category must be set in the group section; categories set in individual feeds will be ignored.
+
+Other per-group properties (such as ignore rules) set in this section will be merged into the individual feed preferences.
 
 ```toml
 [[feeds]]
@@ -211,7 +213,9 @@ You can prevent a feed from appearing in the main `All categories` view (you can
 hide = 1
 ```
 
-## Precedence
+## Details
+
+### Option precedence
 
 A more specific option will take precedence over a more general one. The usual order of precedence is:
 
@@ -219,6 +223,18 @@ A more specific option will take precedence over a more general one. The usual o
 2. Group
 3. Category
 4. Global
+
+### Order of transformations
+
+1. Original entry content is parsed
+2. Images and videos are modified
+3. Strip rules are applied
+4. Ignore rules are applied
+5. Single-feed digests are generated
+6. Groups are aggregated
+7. Group digests are generated
+8. `max_entry_age` limits are applied
+9. `max_entry_num` limits are applied
 
 ### Edge cases and exceptions
 
@@ -228,7 +244,7 @@ A more specific option will take precedence over a more general one. The usual o
 4. You can't set a category at the category level. You can, however, set a default category at the top level (which will replace `uncategorised`). You can set a category at group level (and this is the only way to place a group in a category).
 5. You can't set a group at the top level, category level, or group level.
 6. Because a group is functionally a single feed, some per-feed preferences will be ignored for groups, e.g. `max_entry_num` or `category`.
-7. A digest set at the group level will be applied individually to each feed in the group. You cannot apply a digest to the whole group.
+7. A digest set at the group level will be applied to the whole group, and not inherited by individual groups.
 
 ## How to use
 

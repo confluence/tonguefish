@@ -139,9 +139,20 @@ class Config:
     TOPLEVEL_ONLY = {"feeds", "categories", "groups"}
     IGNORE_FROM_TOPLEVEL = {"url", "title", "group", "timezone", "tzoffset"}
     IGNORE_FROM_CATEGORY = {"url", "title", "group", "category", "timezone", "tzoffset"}
-    IGNORE_FROM_GROUP = {"url", "title", "group"}
+    IGNORE_FROM_GROUP = {"url", "title", "group", "digest"}
 
     GROUPCATNORM = re.compile("^[^a-zA-Z_]*|[^a-zA-Z_0-9]")
+
+    DEFAULTS = {
+        "category": "uncategorised",
+        "max_entry_num": 0,
+        "max_entry_age": 0,
+        "refresh_interval": 600,
+        "full_content": 0,
+        "max_img_width": 0,
+        "sort": 0,
+        "hide": 0,
+    }
 
     @classmethod
     def normalize(cls, name):
@@ -200,30 +211,31 @@ class Config:
         for feed_conf in cls.get("feeds", []):
             conf = {}
 
+            FEED_EXCLUDE = set(cls.TOPLEVEL_ONLY)
+
             if group := feed_conf.get("group"):
                 # If this feed is in a group, start with the shared group conf
-                group_conf = cls.get_group_conf(group)
-                conf.update(group_conf)
+                conf.update(cls.get_group_conf(group, for_feed=True))
 
-                # Then apply the per-feed prefs
-                conf.update({k: v for (k, v) in feed_conf.items() if k not in cls.TOPLEVEL_ONLY})
-
-                # Then apply the group category on top
-                conf["category"] = group_conf.get("category")
+                # Ignore per-feed category later
+                FEED_EXCLUDE |= {"category"}
 
             else:
                 # Not in a group; construct individual feed prefs
 
-                # First the top-level prefs
+                # First the defaults
+                conf.update(cls.DEFAULTS)
+
+                # Then the top-level prefs
                 conf.update({k: v for (k, v) in cls.conf.items() if k not in cls.IGNORE_FROM_TOPLEVEL | cls.TOPLEVEL_ONLY})
 
                 # Then per-category prefs
-                category = conf.get("category", "uncategorised")
+                category = feed_conf.get("category", conf["category"])
                 if category_conf := cls.get("categories", {}).get(cls.normalize(category)):
                     conf.update({k: v for (k, v) in category_conf.items() if k not in cls.IGNORE_FROM_CATEGORY | cls.TOPLEVEL_ONLY})
 
-                # Then the per-feed prefs
-                conf.update({k: v for (k, v) in feed_conf.items() if k not in cls.TOPLEVEL_ONLY})
+            # Then the per-feed prefs
+            conf.update({k: v for (k, v) in feed_conf.items() if k not in FEED_EXCLUDE})
 
             # Then include a reference to the original conf (for modifying the URL)
             conf["_original"] = feed_conf
@@ -233,13 +245,16 @@ class Config:
         return feed_confs
 
     @classmethod
-    def get_group_conf(cls, group):
-        # TODO TODO TODO add a default prefs dict
-        # First the top-level prefs
-        conf = {k: v for (k, v) in cls.conf.items() if k not in cls.IGNORE_FROM_TOPLEVEL | cls.TOPLEVEL_ONLY}
+    def get_group_conf(cls, group, for_feed=False):
+        GROUP_EXCLUDE = cls.IGNORE_FROM_GROUP | cls.TOPLEVEL_ONLY if for_feed else cls.TOPLEVEL_ONLY
+        # First the defaults
+        conf = dict(cls.DEFAULTS)
+
+        # Then the top-level prefs
+        conf.update({k: v for (k, v) in cls.conf.items() if k not in cls.IGNORE_FROM_TOPLEVEL | cls.TOPLEVEL_ONLY})
 
         # Then determine the group category
-        category = conf.get("category", "uncategorised")
+        category = conf["category"]
         group_conf = None
         if group and (group_conf := cls.get("groups", {}).get(cls.normalize(group))):
             category = group_conf.get("category", category)
@@ -250,7 +265,7 @@ class Config:
 
         # Then the per-group prefs
         if group_conf:
-            conf.update({k: v for (k, v) in group_conf.items() if k not in cls.IGNORE_FROM_GROUP | cls.TOPLEVEL_ONLY})
+            conf.update({k: v for (k, v) in group_conf.items() if k not in GROUP_EXCLUDE})
 
         # Then apply the fixed category on top
         conf["category"] = category
@@ -592,7 +607,13 @@ class Feed:
 
         for group_id, grouped_feeds in groups.items():
             group_conf = Config.get_group_conf(group_id)
-            feeds.append(Group(group_conf, group_id, grouped_feeds))
+
+            feed = Group(group_conf, group_id, grouped_feeds)
+
+            if "digest" in feed.conf:
+                feed = Digest(feed)
+
+            feeds.append(feed)
 
         cls.feed_list = feeds
 
@@ -631,7 +652,7 @@ class Feed:
 
     def get_classes(self):
         classes = ["feed", Config.normalize(self.conf.get("category"))]
-        if "hide" in self.conf:
+        if self.conf["hide"]:
             classes.append("hide")
         return classes
 
@@ -747,7 +768,7 @@ class Feed:
                 continue
             entries.append(entry)
 
-        if self.conf.get("sort"):
+        if self.conf["sort"]:
             entries = sorted(entries, key=lambda e: e.get_timetuple(), reverse=True)
 
         return entries
@@ -850,6 +871,44 @@ $feeds
         return group_entries
 
 
+class DigestEntry(Entry):
+    def __init__(self, feed, link, title, timetuple, content):
+        self.link = link
+        self.title = title
+        self.content = content
+
+        now = Config.now
+        self.date_obj = datetime.fromtimestamp(calendar.timegm(timetuple), feed.get_timezone()).astimezone(now.tzinfo)
+
+    def ignore(self):
+        # This should never be called
+        raise NotImplementedError()
+
+    def get_link(self):
+        return self.link
+
+    def get_title(self):
+        return self.title
+
+    def get_timetuple(self):
+        # This should never be called
+        raise NotImplementedError()
+
+    def get_date_obj(self):
+        return self.date_obj
+
+    def fix_video(self, video_str):
+        # This should never be called
+        raise NotImplementedError()
+
+    def fix_image(self, img_str):
+        # This should never be called
+        raise NotImplementedError()
+
+    def get_content(self):
+        return self.content
+
+
 class Digest(Feed):
     def __init__(self, feed):
         self.feed = feed
@@ -918,9 +977,10 @@ class Digest(Feed):
             links = [e.get_link() for e in entries]
             entrycontents = [e.get_content() for e in entries]
 
-            digest_e = FakeObj()
-            digest_e.published_parsed = max(dates)
-            digest_e.description = "\n".join(f'<h1><a href="{l}">{t}</a></h1>\n{c}' for t, l, c in zip(titles, links, entrycontents))
+            digest_date = max(dates)
+            digest_content = "\n".join(f'<h1><a href="{l}">{t}</a></h1>\n{c}' for t, l, c in zip(titles, links, entrycontents))
+            digest_link = None
+            digest_title = None
 
             # Try to generate title and link
             if "id_find" in digest_conf and "id_source" in digest_conf:
@@ -935,8 +995,8 @@ class Digest(Feed):
                 for s in sources[digest_conf["id_source"]]:
                     m = id_find.search(s)
                     if m:
-                        digest_e.link = m.expand(digest_conf["link"])
-                        digest_e.title = m.expand(digest_conf["title"])
+                        digest_link = m.expand(digest_conf["link"])
+                        digest_title = m.expand(digest_conf["title"])
                         break
                 else:
                     # Ignore partial digests unless partial is set to 1
@@ -944,13 +1004,13 @@ class Digest(Feed):
                         continue
 
             # Fall back to default link and/or title -- use the first real entry
-            if not digest_e.get("title"):
-                digest_e.title = f"{titles[0]}..."
+            if not digest_title:
+                digest_title = f"{titles[0]}..."
 
-            if not digest_e.get("link"):
-                digest_e.link = links[0]
+            if not digest_link:
+                digest_link = links[0]
 
-            digest_entries.append(Entry(digest_e, self.feed))
+            digest_entries.append(DigestEntry(self.feed, digest_link, digest_title, digest_date, digest_content))
 
         return digest_entries
 
