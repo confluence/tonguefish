@@ -516,6 +516,10 @@ class Feed:
 
         for feed_conf in Config.get("feeds", []):
             feed = Feed(feed_conf)
+
+            if "digest" in feed.conf:
+                feed = Digest(feed)
+
             if group := feed.conf.get("group"):
                 group_id = Config.normalize(group)
                 groups[group_id].append(feed)
@@ -524,9 +528,15 @@ class Feed:
 
         for group_id, grouped_feeds in groups.items():
             group_conf = Config.get("groups", {}).get(group_id, {})
-            feeds.append(Group(group_conf, group_id, grouped_feeds))
 
-        cls.feed_list = [(Digest(feed) if "digest" in feed.conf else feed) for feed in feeds]
+            feed = Group(group_conf, group_id, grouped_feeds)
+
+            if "digest" in feed.conf:
+                feed = Digest(feed)
+
+            feeds.append(feed)
+
+        cls.feed_list = feeds
 
     def __init__(self, feed_conf):
         self.orig_conf = feed_conf
