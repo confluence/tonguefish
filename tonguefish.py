@@ -194,6 +194,36 @@ class Config:
         return None
 
     @classmethod
+    def get_feed_confs(cls):
+        feed_confs = []
+
+        for feed_conf in cls.get("feeds", []):
+            # First the top-level prefs
+            conf = {k: v for (k, v) in cls.conf.items() if k not in cls.IGNORE_FROM_TOPLEVEL | cls.TOPLEVEL_ONLY}
+
+            # Then per-category prefs
+            category = cls.normalize(feed_conf.get("category", "uncategorised"))
+            if category_conf := cls.get("categories", {}).get(category):
+                conf.update({k: v for (k, v) in category_conf.items() if k not in cls.IGNORE_FROM_CATEGORY | cls.TOPLEVEL_ONLY})
+
+            # Then per-group prefs
+            if group := feed_conf.get("group"):
+                group = cls.normalize(group)
+                if group_conf := cls.get("groups", {}).get(group):
+                    conf.update({k: v for (k, v) in group_conf.items() if k not in cls.IGNORE_FROM_GROUP | cls.TOPLEVEL_ONLY})
+
+            # Finally the per-feed prefs
+            conf.update({k: v for (k, v) in feed_conf.items() if k not in cls.TOPLEVEL_ONLY})
+
+            # Then include a reference to the original conf (for modifying the URL)
+
+            conf["_original"] = feed_conf
+
+            feed_confs.append(conf)
+
+        return feed_confs
+
+    @classmethod
     def save(cls):
         data = tomlkit.dumps(cls.conf)
         checksum = hashlib.sha1(data.encode("utf-8")).hexdigest()
@@ -514,7 +544,7 @@ class Feed:
         feeds = []
         groups = defaultdict(list)
 
-        for feed_conf in Config.get("feeds", []):
+        for feed_conf in Config.get_feed_confs():
             feed = Feed(feed_conf)
 
             if "digest" in feed.conf:
@@ -539,27 +569,7 @@ class Feed:
         cls.feed_list = feeds
 
     def __init__(self, feed_conf):
-        self.orig_conf = feed_conf
-
-        # Construct combined prefs from top-level, category and feed entries
-        self.conf = {}
-
-        # TODO TODO TODO move these accesses inside Config
-        # Apply top-level prefs first
-        self.conf.update({k: v for (k, v) in Config.conf.items() if k not in Config.IGNORE_FROM_TOPLEVEL | Config.TOPLEVEL_ONLY})
-
-        # Then category prefs
-        category = Config.normalize(self.orig_conf.get("category", "uncategorised"))
-        if category_conf := Config.get("categories", {}).get(category):
-            self.conf.update({k: v for (k, v) in category_conf.items() if k not in Config.IGNORE_FROM_CATEGORY | Config.TOPLEVEL_ONLY})
-
-        # Then group prefs
-        if group := self.orig_conf.get("group"):
-            if group_conf := Config.get("groups", {}).get(Config.normalize(group)):
-                self.conf.update({k: v for (k, v) in group_conf.items() if k not in Config.IGNORE_FROM_GROUP | Config.TOPLEVEL_ONLY})
-
-        # Finally the per-feed prefs
-        self.conf.update(self.orig_conf)  # TODO TODO TODO this should also strip disallowed top-level properties.
+        self.conf = feed_conf
 
         # Compile ignore and strip rules for entries
         self.ignore_rules = {}
@@ -579,17 +589,16 @@ class Feed:
         self.feed_obj = None
 
     def update_url(self, url):
-        old_url = self.orig_conf["url"]
-        self.orig_conf["url"] = url
-        self.orig_conf["url"].comment(f"# Updated automatically from {old_url}")
-        self.calculate_id()
+        old_url = self.conf["url"]
+        self.conf["_orig"]["url"] = url
+        self.conf["_orig"]["url"].comment(f"# Updated automatically from {old_url}")
         self.conf["url"] = url
 
     def disable_url(self):
-        old_url = self.orig_conf["url"]
-        self.orig_conf["url_disabled"] = old_url
-        self.orig_conf["url_disabled"].comment("# This feed is gone and should be removed.")
-        del self.orig_conf["url"]
+        old_url = self.conf["url"]
+        self.conf["_orig"]["url_disabled"] = old_url
+        self.conf["_orig"]["url_disabled"].comment("# This feed is gone and should be removed.")
+        del self.conf["_orig"]["url"]
         del self.conf["url"]
 
     def get_classes(self):
