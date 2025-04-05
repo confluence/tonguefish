@@ -18,7 +18,7 @@ import xml.etree.ElementTree as ET
 from string import Template
 from zoneinfo import ZoneInfo
 from datetime import datetime, timezone, timedelta
-from collections import defaultdict, ChainMap
+from collections import defaultdict
 from collections.abc import MutableMapping
 
 import tomlkit
@@ -136,6 +136,17 @@ class Cache:
 
 
 class Config:
+    TOPLEVEL_ONLY = {"feeds", "categories", "groups"}
+    IGNORE_FROM_TOPLEVEL = {"url", "title", "group", "timezone", "tzoffset"}
+    IGNORE_FROM_CATEGORY = {"url", "title", "group", "category", "timezone", "tzoffset"}
+    IGNORE_FROM_GROUP = {"url", "title", "group"}
+
+    GROUPCATNORM = re.compile("^[^a-zA-Z_]*|[^a-zA-Z_0-9]")
+
+    @classmethod
+    def normalize(cls, name):
+        return cls.GROUPCATNORM.sub("", name.replace(" ", "_"))
+
     @classmethod
     def configure(cls, file_path):
         cls.file_path = file_path
@@ -181,17 +192,6 @@ class Config:
             return timezone(timedelta(hours=tzoffset))
 
         return None
-
-    @classmethod
-    def rename_default_category(cls, old_name, new_name):
-        cls.conf["category"] == new_name
-        cls.conf["category"].comment(f"# Updated automatically from {old_name}")
-
-    @classmethod
-    def rename_category_key(cls, old_name, new_name):
-        cls.conf["categories"][new_name] = cls.conf["categories"][old_name]
-        del cls.conf["categories"][old_name]
-        cls.conf["categories"][new_name].comment(f"# Updated automatically from {old_name}")
 
     @classmethod
     def save(cls):
@@ -271,7 +271,7 @@ class Entry:
                     try:
                         timetuple = datetime.strptime(date_raw, custom_format).timetuple()
                     except ValueError as err:
-                        logger.debug("Could not parse publication date in feed %s: %s", self.feed.feed_id, err)
+                        logger.debug("Could not parse publication date in feed %s: %s", self.feed.get_title(), err)
 
             self._timetuple = timetuple
 
@@ -288,7 +288,7 @@ class Entry:
             else:
                 # Fall back to time of feed fetch (bad, but what can you do?)
                 self._date_obj = now
-                logger.warning("Falling back to now as publication date in feed %s.", self.feed.feed_id)
+                logger.warning("Falling back to now as publication date in feed %s.", self.feed.get_title())
 
         return self._date_obj
 
@@ -497,9 +497,6 @@ class Feed:
 </div>
 """
 
-    IGNORE_TOPLEVEL = {"feeds", "categories", "url", "title", "timezone", "tzoffset"}
-    IGNORE_CATEGORY = {"url", "title", "category", "timezone", "tzoffset"}
-
     @classmethod
     def configure(cls, action):
         no_update = False if action == "update" else True
@@ -519,69 +516,80 @@ class Feed:
 
         for feed_conf in Config.get("feeds", []):
             feed = Feed(feed_conf)
-            group = feed.conf.get("group")
-
-            if group:
-                groups[group].append(feed)
+            if group := feed.conf.get("group"):
+                group_id = Config.normalize(group)
+                groups[group_id].append(feed)
             else:
                 feeds.append(feed)
 
-        for group, grouped_feeds in groups.items():
-            feeds.append(Group(grouped_feeds))
+        for group_id, grouped_feeds in groups.items():
+            group_conf = Config.get("groups", {}).get(group_id, {})
+            feeds.append(Group(group_conf, group_id, grouped_feeds))
 
         cls.feed_list = [(Digest(feed) if "digest" in feed.conf else feed) for feed in feeds]
 
     def __init__(self, feed_conf):
         self.orig_conf = feed_conf
-        self.conf = {}
-        self.feed_id = None
 
+        # Construct combined prefs from top-level, category and feed entries
+        self.conf = {}
+
+        # TODO TODO TODO move these accesses inside Config
+        # Apply top-level prefs first
+        self.conf.update({k: v for (k, v) in Config.conf.items() if k not in Config.IGNORE_FROM_TOPLEVEL | Config.TOPLEVEL_ONLY})
+
+        # Then category prefs
+        category = Config.normalize(self.orig_conf.get("category", "uncategorised"))
+        if category_conf := Config.get("categories", {}).get(category):
+            self.conf.update({k: v for (k, v) in category_conf.items() if k not in Config.IGNORE_FROM_CATEGORY | Config.TOPLEVEL_ONLY})
+
+        # Then group prefs
+        if group := self.orig_conf.get("group"):
+            if group_conf := Config.get("groups", {}).get(Config.normalize(group)):
+                self.conf.update({k: v for (k, v) in group_conf.items() if k not in Config.IGNORE_FROM_GROUP | Config.TOPLEVEL_ONLY})
+
+        # Finally the per-feed prefs
+        self.conf.update(self.orig_conf)  # TODO TODO TODO this should also strip disallowed top-level properties.
+
+        # Compile ignore and strip rules for entries
         self.ignore_rules = {}
         self.strip_rules = {}
 
-        self.calculate_conf()
+        def merge_and_compile(conf_key, destination_dict):
+            aggregator = defaultdict(list)
+            for ruleset in self.conf.get(conf_key, {}).values():
+                for field, rule in ruleset.items():
+                    aggregator[field].append(rule)
+            for field, rules in aggregator.items():
+                destination_dict[field] = re.compile("|".join(rules))
 
-    def calculate_conf(self):
-        # Construct combined prefs from top-level, category and feed entries
+        merge_and_compile("ignore", self.ignore_rules)
+        merge_and_compile("strip", self.strip_rules)
 
-        # Clear in place
-        self.conf.clear()
-
-        # Apply top-level prefs first
-        self.conf.update({k: v for (k, v) in Config.conf.items() if k not in self.IGNORE_TOPLEVEL})
-
-        # Then category prefs
-        category = self.orig_conf.get("category", "uncategorised")
-        category_conf = Config.get("categories", {}).get(category)
-        if category_conf:
-            self.conf.update({k: v for (k, v) in category_conf.items() if k not in self.IGNORE_CATEGORY})
-
-        # Finally the per-feed prefs
-        self.conf.update(self.orig_conf)
-
-        self.feed_id = self.conf["url"]
-
-    def calculate_entry_rules(self):
-        self.ignore_rules = {field: re.compile(regex) for (field, regex) in self.conf.get("ignore", {}).items()}
-        self.strip_rules = {field: re.compile(regex) for (field, regex) in self.conf.get("strip", {}).items()}
+        self.feed_obj = None
 
     def update_url(self, url):
         old_url = self.orig_conf["url"]
         self.orig_conf["url"] = url
         self.orig_conf["url"].comment(f"# Updated automatically from {old_url}")
-        self.calculate_conf()
+        self.calculate_id()
+        self.conf["url"] = url
 
     def disable_url(self):
         old_url = self.orig_conf["url"]
         self.orig_conf["url_disabled"] = old_url
         self.orig_conf["url_disabled"].comment("# This feed is gone and should be removed.")
         del self.orig_conf["url"]
-        self.calculate_conf()
+        del self.conf["url"]
 
-    def rename_category(self, old_name, new_name):
-        self.orig_conf["category"] = new_name
-        self.orig_conf["category"].comment(f"# Updated automatically from {old_name}")
-        self.calculate_conf()
+    def get_classes(self):
+        classes = ["feed", Config.normalize(self.conf.get("category", "uncategorised"))]
+        if "hide" in self.conf:
+            classes.append("hide")
+        return classes
+
+    def get_timezone(self):
+        return Config.get_timezone(self.conf) or timezone.utc
 
     def update_obj(self, old_feed_obj=None):
         url = self.conf["url"]
@@ -661,39 +669,53 @@ class Feed:
                 raise ValueError(f"{url}: Feed is not in cache and fetching of missing feeds is disabled.")
             return self.update_obj()
 
-    def get_link(self, feed_obj):
-        return Config.get_link(feed_obj.feed)
+    def fetch(self):
+        logger.info("Fetching feed %s...", self.conf["url"])
+        self.feed_obj = self.get_obj()
 
-    def get_title(self, feed_obj):
-        return self.conf.get("title") or feed_obj.feed.title
+    def get_link(self):
+        if not self.feed_obj:
+            raise ValueError("No feed object available.")
+        return Config.get_link(self.feed_obj.feed)
 
-    def get_content(self, feed_obj):
-        return self.CONTENT.safe_substitute(feedpageurl=self.get_link(feed_obj), feedtitle=self.get_title(feed_obj), feedurl=self.conf["url"])
+    def get_title(self):
+        if not self.feed_obj:
+            raise ValueError("No feed object available.")
+        return self.conf.get("title") or self.feed_obj.feed.title
 
-    def get_classes(self):
-        classes = ["feed", self.conf.get("category", "uncategorised")]
-        if "hide" in self.conf:
-            classes.append("hide")
-        return classes
+    def get_content(self):
+        if not self.feed_obj:
+            raise ValueError("No feed object available.")
+        return self.CONTENT.safe_substitute(feedpageurl=self.get_link(), feedtitle=self.get_title(), feedurl=self.conf["url"])
 
-    def get_timezone(self):
-        return Config.get_timezone(self.conf) or timezone.utc
+    def get_entries(self):
+        if not self.feed_obj:
+            raise ValueError("No feed object available.")
+
+        entries = []
+
+        for e in self.feed_obj.entries:
+            entry = Entry(e, self)
+            if entry.ignore():
+                continue
+            entries.append(entry)
+
+        if self.conf.get("sort"):
+            entries = sorted(entries, key=lambda e: e.get_timetuple(), reverse=True)
+
+        return entries
 
     def generate(self, out):
-        logger.info("Generating feed %s...", self.feed_id)
-        feed_obj = self.get_obj()
-
-        # Create ignore filter
-        self.calculate_entry_rules()
+        logger.info("Generating feed %s...", self.get_title())
 
         # Feed title
-        title = self.get_title(feed_obj)
+        title = self.get_title()
 
         # Feed classes
         classes = self.get_classes()
 
         # Write header
-        out.write(self.HEADER.safe_substitute(feedtitle=title, feedcontent=self.get_content(feed_obj), classes=" ".join(classes)))
+        out.write(self.HEADER.safe_substitute(feedtitle=title, feedcontent=self.get_content(), classes=" ".join(classes)))
 
         # Per-feed limits
         max_num = self.conf.get("max_entry_num", 0)
@@ -701,17 +723,9 @@ class Feed:
 
         num_entries = 0
 
-        entries = (Entry(e, self) for e in feed_obj.entries)
-        if self.conf.get("sort"):
-            entries = sorted(entries, key=lambda e: e.get_timetuple(), reverse=True)
-
         # Process entries
-        for i, entry in enumerate(entries):
+        for i, entry in enumerate(self.get_entries()):
             try:
-                # Skip ignored
-                if entry.ignore():
-                    continue
-
                 entry.generate(out, title, max_age)
 
                 # Stop if number limit exceeded
@@ -734,24 +748,10 @@ class Group(Feed):
 $feeds
 """)
 
-    def __init__(self, feeds):
-        self.orig_conf = None  # not applicable
+    def __init__(self, group_conf, group_id, feeds):
+        self.conf = group_conf
+        self.group_id = group_id
         self.feeds = feeds
-        self.conf = {}
-        self.feed_id = None
-        self.calculate_conf()
-
-    def calculate_conf(self):
-        # Construct combined prefs from individual feed entries
-
-        # Clear in place
-        self.conf.clear()
-
-        # Apply individual feed prefs in sequence
-        self.conf.update(dict(ChainMap(*(f.conf for f in self.feeds))))
-        del self.conf["url"]  # The grouped feed has no url
-        self.feed_id = self.conf["group"]
-        del self.conf["group"]  # The grouped feed is not itself in the group
 
     def update_url(self, url):
         # This should never be called
@@ -760,110 +760,88 @@ $feeds
     def disable_url(self):
         # This should never be called
         raise NotImplementedError()
-
-    def rename_category(self, old_name, new_name):
-        for feed in self.feeds:
-            if feed.conf.get("category") == old_name:
-                feed.rename_category(old_name, new_name)
-        self.calculate_conf()
 
     def update_obj(self, old_feed_obj=None):
         # This should never be called
         raise NotImplementedError()
 
-    def get_obj(self):
-        feed_objs = []
-        for feed in self.feeds:
-            try:
-                feed_obj = feed.get_obj()
-                feed_objs.append(feed_obj)
-            except ValueError as err:
-                logging.debug(err)
-                continue
-        if not feed_objs:
-            raise ValueError("No valid feed found in group %s.", self.feed_id)
-
-        group_obj = FakeObj()
-        group_obj.feed.title = self.feed_id.replace("_", " ").capitalize()
-
-        seen = set()
-        entries = []
-
-        for f in feed_objs:
-            for e in f.entries:
-                l = Config.get_link(e)
-                if l not in seen:
-                    entries.append(e)
-                    seen.add(l)
-
-        group_obj.entries = sorted(entries, key=lambda e: Entry(e, self).get_timetuple(), reverse=True)
-        group_obj.feed_objs = feed_objs
-        return group_obj
-
     def get_classes(self):
         return ["group", *super().get_classes()]
 
-    def get_content(self, feed_obj):
-        title = self.get_title(feed_obj)
-        feedcontents = "".join(feed.get_content(f_obj) for (feed, f_obj) in zip(self.feeds, feed_obj.feed_objs))
+    def fetch(self):
+        logger.info("Fetching group %s...", self.get_title())
+        for feed in self.feeds:
+            feed.fetch()
+
+    def get_obj(self):
+        # This should never be called
+        raise NotImplementedError()
+
+    def get_link(self):
+        # This should never be called
+        raise NotImplementedError()
+
+    def get_title(self):
+        return self.conf.get("title", self.group_id.replace('_', ' ').capitalize())
+
+    def get_content(self):
+        title = self.get_title()
+        feedcontents = "".join(feed.get_content() for feed in self.feeds)
         return self.CONTENT.safe_substitute(grouptitle=title, feeds=feedcontents)
+
+    def get_entries(self):
+        group_entries = []
+        seen = set()
+
+        for feed in self.feeds:
+            for entry in feed.get_entries():
+                if not entry.get_link() in seen:
+                    group_entries.append(entry)
+                    seen.add(entry.get_link())
+
+        group_entries = sorted(group_entries, key=lambda e: e.get_timetuple(), reverse=True)
+        return group_entries
 
 
 class Digest(Feed):
     def __init__(self, feed):
         self.feed = feed
-        self.conf = {}
-        self.feed_id = feed.feed_id
-        self.calculate_conf()
-
-    def calculate_conf(self):
-        # Copy prefs from base feed
-
-        # Clear in place
-        self.conf.clear()
-
-        # Update from base feed
-        self.conf.update(self.feed.conf)
+        self.conf = feed.conf
 
     def update_url(self, url):
         self.feed.update_url(url)
-        self.calculate_conf()
 
     def disable_url(self):
         self.feed.disable_url()
-        self.calculate_conf()
-
-    def rename_category(self, old_name, new_name):
-        self.feed.rename_category(old_name, new_name)
-        self.calculate_conf()
 
     def get_classes(self):
         return ["digest", *self.feed.get_classes()]
 
-    def get_obj(self):
-        feed_obj = super().get_obj()
+    def fetch(self):
+        self.feed.fetch()
 
-        digest_obj = FakeObj()
-        digest_obj.feed.title = feed_obj.feed.title
-        digest_obj.entries = []
+    def get_link(self):
+        return self.feed.get_link()
+
+    def get_title(self):
+        return f"{self.feed.get_title()} (digest)"
+
+    def get_content(self):
+        return self.feed.get_content()  # add special sauce?
+
+    def get_entries(self):
+        original_entries = self.feed.get_entries()
 
         digest_conf = self.conf["digest"]
         interval = digest_conf.get("interval", "day")
 
-        self.calculate_entry_rules()
-
         # Group entries by interval
-        digest_entries = defaultdict(list)
-        for e in feed_obj.entries:
-            entry = Entry(e, self)
+        digests = defaultdict(list)
 
-            # Skip ignored
-            if entry.ignore():
-                continue
-
+        for entry in original_entries:
             dt = entry.get_timetuple()
             if not dt:
-                logger.debug("Omitting entry from digest in feed %s because a publication date could not be parsed.", self.feed_id)
+                logger.debug("Omitting entry from digest in feed %s because a publication date could not be parsed.", self.get_title())
                 continue
 
             if interval == "hour":
@@ -875,14 +853,16 @@ class Digest(Feed):
             elif interval == "month":
                 key = (dt.tm_year, dt.tm_mon)
 
-            digest_entries[key].append(entry)
+            digests[key].append(entry)
 
-        if not digest_entries:
-            logger.error("Could not create digest for feed %s. Using original feed.", self.feed_id)
-            return feed_obj
+        if not digests:
+            logger.error("Could not create digest for feed %s. Using original feed.", self.get_title())
+            return original_entries
 
         # Process grouped entries into digest entries
-        for _, entries in sorted(digest_entries.items(), reverse=True):
+        digest_entries = []
+
+        for _, entries in sorted(digests.items(), reverse=True):
             # Oldest first within each digest
             entries.reverse()
 
@@ -892,8 +872,8 @@ class Digest(Feed):
             entrycontents = [e.get_content() for e in entries]
 
             digest_e = FakeObj()
-            digest_e.published_parsed = [max(l) for l in zip(*dates)]
-            digest_e.description = "\n".join(f'<h1><a href="{l}">{t}</a></h1>\n{d}' for t, l, d in zip(titles, links, entrycontents))
+            digest_e.published_parsed = [max(d) for d in zip(*dates)]
+            digest_e.description = "\n".join(f'<h1><a href="{l}">{t}</a></h1>\n{c}' for t, l, c in zip(titles, links, entrycontents))
 
             # Try to generate title and link
             if "id_find" in digest_conf and "id_source" in digest_conf:
@@ -923,16 +903,9 @@ class Digest(Feed):
             if not digest_e.get("link"):
                 digest_e.link = links[0]
 
-            digest_obj.entries.append(digest_e)
+            digest_entries.append(Entry(digest_e, self.feed))
 
-        # Remove ignore and strip from self (because we ignore and strip before digesting)
-        if "ignore" in self.conf:
-            del self.conf["ignore"]
-        if "strip" in self.conf:
-            del self.conf["strip"]
-        self.calculate_entry_rules()
-
-        return digest_obj
+        return digest_entries
 
 
 class Tonguefish:
@@ -1022,38 +995,17 @@ $cat_filters
         return filter_html, filter_css
 
     def generate_cat_filters(self):
-        # Characters to remove from category names
-        CATIDREMOVE = re.compile("^[^a-zA-Z_]*|[^a-zA-Z_0-9]")
-
         catids = set()
 
-        oldcatid = Config.get("category")
-        if oldcatid:
-            catid = CATIDREMOVE.sub("", oldcatid.replace(" ", "_"))
-            if catid != oldcatid:
-                logger.warning("Invalid default category name %s. Correcting to %s.", oldcatid, catid)
-                Config.rename_default_category(oldcatid, catid)
-
-        for oldcatid in Config.get("categories", {}).keys():
-            catid = CATIDREMOVE.sub("", oldcatid.replace(" ", "_"))
-            if catid != oldcatid:
-                logger.warning("Invalid category name %s in categories. Correcting to %s.", oldcatid, catid)
-                Config.rename_category_key(oldcatid, catid)
-
         for feed in Feed.feed_list:
-            oldcatid = feed.conf.get("category")
-            if oldcatid:
-                catid = CATIDREMOVE.sub("", oldcatid.replace(" ", "_"))
-                catids.add(catid)
-                if catid != oldcatid:
-                    logger.warning("Invalid category name %s in feed %s. Correcting to %s.", oldcatid, feed.feed_id, catid)
-                    feed.rename_category(oldcatid, catid)
+            if cat := feed.conf.get("category"):
+                catids.add(Config.normalize(cat))
             else:
                 catids.add("uncategorised")
 
         categories = [{"name": "catfilter", "id": "allcats", "label": "All categories", "checked": "checked"}]
         for catid in sorted(catids):
-            catlabel = catid.replace("_", " ").capitalize()
+            catlabel = Config.get("categories", {}).get(catid, {}).get("title", catid.replace("_", " ").capitalize())
             categories.append({"name": "catfilter", "id": catid, "label": catlabel, "checked": ""})
 
         # Category input HTML
@@ -1106,9 +1058,10 @@ $cat_filters
 
             for feed in Feed.feed_list:
                 try:
+                    feed.fetch()
                     feed.generate(out)
                 except ValueError as err:
-                    logging.warning("Skipping feed %s: %s", feed.feed_id, err)
+                    logging.warning("Skipping feed %s: %s", feed.get_title(), err)
                     continue
 
             out.write(self.FOOTER)

@@ -34,7 +34,7 @@ Parsed feed objects are pickled and saved in a cache. `tonguefish` attempts to u
 
 ## Basic feed configuration
 
-Feeds are listed in a TOML AoT (array of tables). Each table in the array must at minimum contain a URL. A feed can also have exactly one category. Please refer to the [TOML documentation](https://toml.io/en/latest) for an overview of the TOML syntax.
+Feeds are listed in a TOML AoT (array of tables). Each table in the array must at minimum contain a URL. A feed can have exactly one category and/or exactly one group (see below). Please refer to the [TOML documentation](https://toml.io/en/latest) for an overview of the TOML syntax.
 
 ```toml
 [[feeds]]
@@ -42,7 +42,9 @@ url = "https://example.com/rss"
 category = "blog"
 ```
 
-Most feed options can be specified globally (at the top level), in the category section, or in a single feed (although some of these options may not make sense). A more specific option will take precedence over a more general one.
+Most feed options can be specified globally (at the top level), in the category section, in the group section, or in a single feed (although some of these options may not make sense). A more specific option will take precedence over a more general one: feed before group before category before global.
+
+Category and group keys may only contain lowercase letters and underscores. Category and group names used elsewhere in the confguration are normalized to this format when they are matched to keys: spaces are replaced with underscores and other characters are removed.
 
 ```toml
 [categories.blog]
@@ -53,9 +55,11 @@ interval = "week"
 ```
 
 Exceptions:
-1. `url` and `title` can only be set per feed.
-2. `timezone` and `tzoffset` are used to set your local time at the top level, a feed's local time at the feed level, and are ignored at the category level.
-3. You can't set a category at the category level. You can, however, set a default category at the top level (which will replace `uncategorised`).
+1. `url` and can only be set per feed.
+2. `title` cannot be set at the top level. In a category or group section, `title` sets the display name for the category or group.
+2. `timezone` and `tzoffset` are used to set your local time at the top level, a feed's local time at the feed or group level, and are ignored at the category level.
+3. You can't set a category at the category level. You can, however, set a default category at the top level (which will replace `uncategorised`), or at the group level.
+4. You can't set a group at the top level, category level, or group level.
 
 ## Transformations
 
@@ -132,26 +136,28 @@ sort = 1
 
 ### Ignore
 
-You can ignore entries that match certain patterns. Currently one regex is allowed per field (you can combine multiple regexes to apply to a single field with `|`). Use `content` to search whatever field `tonguefish` decides to use as the content, and `link` to search whichever link `tonguefish` picks for the entry. Otherwise, any field that `feedparser` understands will be checked directly -- but it may not exist for certain feeds.
+You can ignore entries that match certain patterns. Each set of ignore rules is a subtable which has to have a name and can have one regex rule per field. The `ignore` preference is merged like other preferences -- rulesets with the same name will override one another. You can combine multiple regexes in one field in one ruleset with `|`, or add multiple different rulesets.
+
+Use `content` to search whatever field `tonguefish` decides to use as the content, and `link` to search whichever link `tonguefish` picks for the entry. Otherwise, any field that `feedparser` understands will be checked directly -- but it may not exist for certain feeds.
 
 ```toml
 [[feeds]]
 url = "https://example.com/rss"
 
-[feeds.ignore]
+[feeds.ignore.cheese]
 title = '[Ch]eese'
 content = 'gouda|cheddar|gorgonzola'
 ```
 
 ### Strip text
 
-You can strip text from the entry title or entry content using a regular expression. Bear in mind that if the content shown for the feed is HTML, you need to take the HTML structure into account. Absolutely no validation of the resulting HTML is done; use this with care.
+You can strip text from the entry title or entry content using a regular expression. Bear in mind that if the content shown for the feed is HTML, you need to take the HTML structure into account. The format of the strip rules is the same as the format for the ignore rules. Absolutely no validation of the resulting HTML is done; use this with care.
 
 ```toml
 [[feeds]]
 url = "https://example.com/rss"
 
-[feeds.strip]
+[feeds.strip.annoyingprefix]
 title = '^Annoying Prefix \|'
 content = '<p>Start Of Ad.*End!</p>'
 ```
@@ -184,7 +190,7 @@ title = 'Issue \1'
 
 Entries from multiple feeds can be aggregated into a single feed. The intended use case is grouping individual account feeds from a website which does not offer a single feed for all your subscriptions.
 
-Additional custom properties (such as title, category, ignore or digest rules) that are defined on individual feeds in the same group are merged together and applied only to the final grouped feed. They should only be defined on a single feed in the group; merging multiple definitions is unsupported and can give unpredictable results.
+A display title for the group can be set in the `groups` table of the configuration. Other per-group properties (such as category, ignore or digest rules) set in this section will be merged into the feed preferences (they will be applied after per-category preferences but before per-feed preferences). Preferences set on individual feeds in the group will be applied only to those feeds, as usual.
 
 ```toml
 [[feeds]]
@@ -199,6 +205,10 @@ group = "example"
 [[feeds]]
 url = "https://example.com/news/rss"
 group = "example"
+
+[groups.example]
+title = "Cool example feeds"
+category = "media" 
 ```
 
 ### Hide
@@ -346,7 +356,7 @@ I hacked this together in a couple of days, and it's very alpha, but it's usable
 
 **Display**
 
-* Incorporation of more data from feeds and entries (e.g. author; publication date; direct links to media) and more information about current feed configuration
+* Incorporation of more data from feeds and entries (e.g. direct links to media) and more information about current feed configuration
 * Style improvements
 * More feed customisation options
 * Ordering of feeds (currently the order in the configuration is preserved, except that group feeds are added at the end)
@@ -365,6 +375,7 @@ I hacked this together in a couple of days, and it's very alpha, but it's usable
 
 ### Known issues
 
+* In theory, groups and digests can be nested in either order. This has not been tested fully.
 * Extra files are not removed from the output directory (could cause problems with stylesheets or favicons).
 * If the Python bindings for `libxml2` are installed, `feedparser` uses a more strict parser which chokes on feeds with missing namespace declarations. I'm going to see how best to fix this. In the meantime, a workaround (if you can't uninstall the bindings or use a virtualenv) is to automate downloading the feed to a local file and fixing the namespace, and use the local file path in the config instead.
 * The unpickled objects are not checked for correctness; something weird may happen if the version of Python and/or `feedparser` changes. I suggest clearing the cache between upgrades.
