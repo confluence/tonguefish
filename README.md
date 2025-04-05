@@ -42,7 +42,7 @@ url = "https://example.com/rss"
 category = "blog"
 ```
 
-Most feed options can be specified globally (at the top level), in the category section, in the group section, or in a single feed (although some of these options may not make sense). A more specific option will take precedence over a more general one: feed before group before category before global.
+Most feed options can be specified globally (at the top level), in a category section, in a group section, or in a single feed (although some of these options may not make sense). Please refer to the precedence and edge cases documentation below.
 
 Category and group keys may only contain lowercase letters and underscores. Category and group names used elsewhere in the confguration are normalized to this format when they are matched to keys: spaces are replaced with underscores and other characters are removed.
 
@@ -53,13 +53,6 @@ max_entry_num = 20
 [categories.blog.digest]
 interval = "week"
 ```
-
-Exceptions:
-1. `url` and can only be set per feed.
-2. `title` cannot be set at the top level. In a category or group section, `title` sets the display name for the category or group.
-2. `timezone` and `tzoffset` are used to set your local time at the top level, a feed's local time at the feed or group level, and are ignored at the category level.
-3. You can't set a category at the category level. You can, however, set a default category at the top level (which will replace `uncategorised`), or at the group level.
-4. You can't set a group at the top level, category level, or group level.
 
 ## Transformations
 
@@ -98,8 +91,6 @@ max_entry_age = 0
 # Don't include the full content from this feed
 full_content = 0
 ```
-
-Limits are applied after groups, digests, and ignore rules (see below).
 
 ### Title
 
@@ -219,6 +210,25 @@ You can prevent a feed from appearing in the main `All categories` view (you can
 [categories.news]
 hide = 1
 ```
+
+## Precedence
+
+A more specific option will take precedence over a more general one. The usual order of precedence is:
+
+1. Feed
+2. Group
+3. Category
+4. Global
+
+### Edge cases and exceptions
+
+1. `url` can only be set per feed.
+2. `title` cannot be set at the top level. In a category or group section, `title` sets the display name for the category or group.
+3. `timezone` and `tzoffset` are used to set your local time at the top level, a feed's local time at the feed or group level, and are ignored at the category level.
+4. You can't set a category at the category level. You can, however, set a default category at the top level (which will replace `uncategorised`). You can set a category at group level (and this is the only way to place a group in a category).
+5. You can't set a group at the top level, category level, or group level.
+6. Because a group is functionally a single feed, some per-feed preferences will be ignored for groups, e.g. `max_entry_num` or `category`.
+7. A digest set at the group level will be applied individually to each feed in the group. You cannot apply a digest to the whole group.
 
 ## How to use
 
@@ -356,6 +366,7 @@ I hacked this together in a couple of days, and it's very alpha, but it's usable
 
 **Display**
 
+* Maybe rethink current interaction of group and digest (it would make more sense to apply a group digest to a group)
 * Incorporation of more data from feeds and entries (e.g. direct links to media) and more information about current feed configuration
 * Style improvements
 * More feed customisation options
@@ -375,7 +386,6 @@ I hacked this together in a couple of days, and it's very alpha, but it's usable
 
 ### Known issues
 
-* In theory, groups and digests can be nested in either order. This has not been tested fully.
 * Extra files are not removed from the output directory (could cause problems with stylesheets or favicons).
 * If the Python bindings for `libxml2` are installed, `feedparser` uses a more strict parser which chokes on feeds with missing namespace declarations. I'm going to see how best to fix this. In the meantime, a workaround (if you can't uninstall the bindings or use a virtualenv) is to automate downloading the feed to a local file and fixing the namespace, and use the local file path in the config instead.
 * The unpickled objects are not checked for correctness; something weird may happen if the version of Python and/or `feedparser` changes. I suggest clearing the cache between upgrades.

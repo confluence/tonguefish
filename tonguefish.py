@@ -198,30 +198,64 @@ class Config:
         feed_confs = []
 
         for feed_conf in cls.get("feeds", []):
-            # First the top-level prefs
-            conf = {k: v for (k, v) in cls.conf.items() if k not in cls.IGNORE_FROM_TOPLEVEL | cls.TOPLEVEL_ONLY}
+            conf = {}
 
-            # Then per-category prefs
-            category = cls.normalize(feed_conf.get("category", "uncategorised"))
-            if category_conf := cls.get("categories", {}).get(category):
-                conf.update({k: v for (k, v) in category_conf.items() if k not in cls.IGNORE_FROM_CATEGORY | cls.TOPLEVEL_ONLY})
-
-            # Then per-group prefs
             if group := feed_conf.get("group"):
-                group = cls.normalize(group)
-                if group_conf := cls.get("groups", {}).get(group):
-                    conf.update({k: v for (k, v) in group_conf.items() if k not in cls.IGNORE_FROM_GROUP | cls.TOPLEVEL_ONLY})
+                # If this feed is in a group, start with the shared group conf
+                group_conf = cls.get_group_conf(group)
+                conf.update(group_conf)
 
-            # Finally the per-feed prefs
-            conf.update({k: v for (k, v) in feed_conf.items() if k not in cls.TOPLEVEL_ONLY})
+                # Then apply the per-feed prefs
+                conf.update({k: v for (k, v) in feed_conf.items() if k not in cls.TOPLEVEL_ONLY})
+
+                # Then apply the group category on top
+                conf["category"] = group_conf.get("category")
+
+            else:
+                # Not in a group; construct individual feed prefs
+
+                # First the top-level prefs
+                conf.update({k: v for (k, v) in cls.conf.items() if k not in cls.IGNORE_FROM_TOPLEVEL | cls.TOPLEVEL_ONLY})
+
+                # Then per-category prefs
+                category = conf.get("category", "uncategorised")
+                if category_conf := cls.get("categories", {}).get(cls.normalize(category)):
+                    conf.update({k: v for (k, v) in category_conf.items() if k not in cls.IGNORE_FROM_CATEGORY | cls.TOPLEVEL_ONLY})
+
+                # Then the per-feed prefs
+                conf.update({k: v for (k, v) in feed_conf.items() if k not in cls.TOPLEVEL_ONLY})
 
             # Then include a reference to the original conf (for modifying the URL)
-
             conf["_original"] = feed_conf
 
             feed_confs.append(conf)
 
         return feed_confs
+
+    @classmethod
+    def get_group_conf(cls, group):
+        # TODO TODO TODO add a default prefs dict
+        # First the top-level prefs
+        conf = {k: v for (k, v) in cls.conf.items() if k not in cls.IGNORE_FROM_TOPLEVEL | cls.TOPLEVEL_ONLY}
+
+        # Then determine the group category
+        category = conf.get("category", "uncategorised")
+        group_conf = None
+        if group and (group_conf := cls.get("groups", {}).get(cls.normalize(group))):
+            category = group_conf.get("category", category)
+
+        # Then the per-category prefs
+        if category_conf := cls.get("categories", {}).get(cls.normalize(category)):
+            conf.update({k: v for (k, v) in category_conf.items() if k not in cls.IGNORE_FROM_CATEGORY | cls.TOPLEVEL_ONLY})
+
+        # Then the per-group prefs
+        if group_conf:
+            conf.update({k: v for (k, v) in group_conf.items() if k not in cls.IGNORE_FROM_GROUP | cls.TOPLEVEL_ONLY})
+
+        # Then apply the fixed category on top
+        conf["category"] = category
+
+        return conf
 
     @classmethod
     def save(cls):
@@ -557,14 +591,8 @@ class Feed:
                 feeds.append(feed)
 
         for group_id, grouped_feeds in groups.items():
-            group_conf = Config.get("groups", {}).get(group_id, {})
-
-            feed = Group(group_conf, group_id, grouped_feeds)
-
-            if "digest" in feed.conf:
-                feed = Digest(feed)
-
-            feeds.append(feed)
+            group_conf = Config.get_group_conf(group_id)
+            feeds.append(Group(group_conf, group_id, grouped_feeds))
 
         cls.feed_list = feeds
 
@@ -602,7 +630,7 @@ class Feed:
         del self.conf["url"]
 
     def get_classes(self):
-        classes = ["feed", Config.normalize(self.conf.get("category", "uncategorised"))]
+        classes = ["feed", Config.normalize(self.conf.get("category"))]
         if "hide" in self.conf:
             classes.append("hide")
         return classes
@@ -740,20 +768,20 @@ class Feed:
         max_num = self.conf.get("max_entry_num", 0)
         max_age = self.conf.get("max_entry_age", 0)
 
-        num_entries = 0
+        num_entries = 1
 
         # Process entries
-        for i, entry in enumerate(self.get_entries()):
+        for entry in self.get_entries():
+            # Stop if number limit exceeded
+            if max_num and num_entries > max_num:
+                break
+
             try:
                 entry.generate(out, title, max_age)
-
-                # Stop if number limit exceeded
                 num_entries += 1
-                if max_num and num_entries > max_num:
-                    break
 
             except (KeyError, AttributeError, ValueError) as err:
-                logger.warning("Couldn't parse entry %s: %s", i, err)
+                logger.warning("Couldn't parse entry: %s", err)
                 logger.debug(traceback.format_exc())
                 continue
 
@@ -891,7 +919,7 @@ class Digest(Feed):
             entrycontents = [e.get_content() for e in entries]
 
             digest_e = FakeObj()
-            digest_e.published_parsed = [max(d) for d in zip(*dates)]
+            digest_e.published_parsed = max(dates)
             digest_e.description = "\n".join(f'<h1><a href="{l}">{t}</a></h1>\n{c}' for t, l, c in zip(titles, links, entrycontents))
 
             # Try to generate title and link
@@ -1017,10 +1045,7 @@ $cat_filters
         catids = set()
 
         for feed in Feed.feed_list:
-            if cat := feed.conf.get("category"):
-                catids.add(Config.normalize(cat))
-            else:
-                catids.add("uncategorised")
+            catids.add(Config.normalize(feed.conf.get("category")))
 
         categories = [{"name": "catfilter", "id": "allcats", "label": "All categories", "checked": "checked"}]
         for catid in sorted(catids):
