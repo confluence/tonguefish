@@ -670,6 +670,10 @@ class Feed:
             logger.debug("Fetching new feed %s...", url)
             feed_obj = feedparser.parse(url)
 
+        if "status" not in feed_obj:
+            logger.warning("%s: update is not well-formed.", url)
+            return old_feed_obj
+
         if feed_obj.status == 200:
             logger.info("%s: updated.", url)
             Cache.put(url, feed_obj)
