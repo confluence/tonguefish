@@ -1168,7 +1168,7 @@ $cat_filters
                     feed.fetch()
                     feed.generate(out)
                 except ValueError as err:
-                    logging.warning("Skipping feed %s: %s", feed.get_title(), err)
+                    logging.warning("Skipping feed %s: %s", feed.conf.get("url", feed.conf.get("url_disabled")), err)
                     continue
 
             out.write(self.FOOTER)
