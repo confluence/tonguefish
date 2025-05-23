@@ -34,7 +34,7 @@ div.feed {
     break-inside: avoid-column;
 }
 
-div.feed:not(:has(li)) {
+div.feed:not(:has(li.entry)) {
     display: none;
 }
 
@@ -89,7 +89,7 @@ a:hover {
     overflow: auto;
 }
 
-li:hover > .entrycontent, .feed:hover:not(:has(ul:hover)) > .feedcontent {
+li.entry:hover > .entrycontent, div.feed:hover:not(:has(ul:hover)) > .feedcontent {
     transition-delay: 0.5s;
     transition-property: visibility;
     visibility: visible;

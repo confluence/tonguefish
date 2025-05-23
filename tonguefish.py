@@ -512,6 +512,10 @@ class Entry:
             for video in self.VIDEO.findall(content):
                 content = content.replace(video, self.fix_video(video))
 
+            # Hack to strip <li> and </li> outside lists, which mess up the layout
+            content = re.sub('(?<!.<ul>|.<ol>|</li>)<li.*?>', '', content)
+            content = re.sub('</li>(?!<li>|</ul>|</ol>)', '', content)
+
             if rule := self.feed.strip_rules.get("content"):
                 content = rule.sub("", content)
 
@@ -1058,11 +1062,11 @@ $cat_filters
     AGELABELS = ("Today", "This week", "This month", "This year")
 
     ENTRYFILTERCSSRULES = Template("""
-#filters:has(#$id:checked)~#main li:not(.$id) {
+#filters:has(#$id:checked)~#main li.entry:not(.$id) {
     display: none;
 }
 
-#filters:has(#$id:checked)~#main div.feed:not(:has(li.$id)) {
+#filters:has(#$id:checked)~#main div.feed:not(:has(li.entry.$id)) {
     display: none;
 }
 """)
