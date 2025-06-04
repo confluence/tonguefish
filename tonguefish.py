@@ -513,8 +513,20 @@ class Entry:
                 content = content.replace(video, self.fix_video(video))
 
             # Hack to strip <li> and </li> outside lists, which mess up the layout
-            content = re.sub('(?<!.<ul>|.<ol>|</li>)<li.*?>', '', content)
-            content = re.sub('</li>(?!<li>|</ul>|</ol>)', '', content)
+            list_stack = 0
+
+            def process_list(m):
+                nonlocal list_stack
+                e = m.group(0)
+                if e[1:3] in ('ul', 'ol'):
+                    list_stack += 1
+                    return e
+                if e[1:4] in ('/ul', '/ol'):
+                    list_stack -= 1
+                    return e
+                return e if list_stack > 0 else ''
+
+            content = re.sub('</?(li|ul|ol)( .*)?>', process_list, content)
 
             if rule := self.feed.strip_rules.get("content"):
                 content = rule.sub("", content)
