@@ -527,7 +527,11 @@ class Entry:
                 return e if list_stack > 0 else ''
 
             content = re.sub('</?(li|ul|ol)( .*)?>', process_list, content)
+            
+            # Hack to remove trailing unclosed <em> for the same reason
+            content = re.sub('<em>(?!</em>)', '', content)
 
+            # Apply content strip rules
             if rule := self.feed.strip_rules.get("content"):
                 content = rule.sub("", content)
 
