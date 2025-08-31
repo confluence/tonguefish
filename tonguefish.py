@@ -530,6 +530,9 @@ class Entry:
             
             # Hack to remove trailing unclosed <em> for the same reason
             content = re.sub('<em>(?!</em>)', '', content)
+            
+            # Hack to remove article tags, for the same reason (tag mismatch in a feed)
+            content = re.sub('</?article.*?>', '', content)
 
             # Apply content strip rules
             if rule := self.feed.strip_rules.get("content"):
