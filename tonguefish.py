@@ -661,15 +661,15 @@ class Feed:
 
     def update_url(self, url):
         old_url = self.conf["url"]
-        self.conf["_orig"]["url"] = url
-        self.conf["_orig"]["url"].comment(f"# Updated automatically from {old_url}")
+        self.conf["_original"]["url"] = url
+        self.conf["_original"]["url"].comment(f"# Updated automatically from {old_url}")
         self.conf["url"] = url
 
     def disable_url(self):
         old_url = self.conf["url"]
-        self.conf["_orig"]["url_disabled"] = old_url
-        self.conf["_orig"]["url_disabled"].comment("# This feed is gone and should be removed.")
-        del self.conf["_orig"]["url"]
+        self.conf["_original"]["url_disabled"] = old_url
+        self.conf["_original"]["url_disabled"].comment("# This feed is gone and should be removed.")
+        del self.conf["_original"]["url"]
         del self.conf["url"]
 
     def get_classes(self):
@@ -763,9 +763,14 @@ class Feed:
                 raise ValueError(f"{url}: Feed is not in cache and fetching of missing feeds is disabled.")
             return self.update_obj()
 
+    def update_title_comment(self):
+        # Add a comment with the title from the feed object, because some URLs are dumb
+        self.conf["_original"].comment(self.get_title())
+
     def fetch(self):
         logger.info("Fetching feed %s...", self.conf["url"])
         self.feed_obj = self.get_obj()
+        self.update_title_comment()
 
     def get_link(self):
         if not self.feed_obj:
