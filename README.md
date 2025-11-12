@@ -359,7 +359,7 @@ A log can be useful for debugging, but if you don't want to log output, replace 
 You can configure a refresh interval in seconds at the top level of `feeds.toml`.
 
 ```toml
-# How often to refresh the page (0 to disable; this does NOT update the feeds; you have to conigure that elsewhere)
+# How often to refresh the page (0 to disable; this does NOT update the feeds; you have to configure that elsewhere)
 refresh_interval = 600 # seconds
 ```
 
