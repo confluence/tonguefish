@@ -30,7 +30,7 @@ The page can be configured to refresh periodically using a meta header. Updating
 
 Parsed feed objects are pickled and saved in a cache. `tonguefish` attempts to use an eTag and / or `Last-Modified` header from the cached object to avoid downloading a feed that hasn't changed.
 
-`tonguefish` detects when a feed has redirected permanently or been removed, and edits the config file to update or disable the URL, respectively.
+`tonguefish` detects when a feed has redirected permanently or been removed, and edits the config file to update or disable the URL, respectively. It also automatically annotates feed URLs with feed titles in comments, so that you don't have to label mystery meat URLs manually.
 
 ## Basic feed configuration
 
@@ -406,13 +406,10 @@ I hacked this together in a couple of days, and it's very alpha, but it's usable
 **Conf file modification**
 
 * Script option to add a new feed
-* Script option to add missing feed titles to config (so that you can identify mystery meat URLs in the file if you didn't bother to annotate them with comments when you added them)
-* Other script options to normalize the config file
 
 **Technical**
 
 * More code refactoring and cleanup
-* Fetching and caching the data first, and then writing the index page (also see below).
 
 ### Known issues
 
