@@ -349,7 +349,7 @@ crontab -e
 Enter this line (substituting full paths as appropriate), and save the crontab:
 
 ```cron
-@hourly cd /path/to/tonguefish/dir' ./tonguefish.py >> /path/to/logfile 2>&1
+@hourly cd /path/to/tonguefish/dir'; ./tonguefish.py >> /path/to/logfile 2>&1
 ```
 
 A log can be useful for debugging, but if you don't want to log output, replace `>> /path/to/logfile` with `> /dev/null`. By default `tonguefish` will only print warnings and errors.
