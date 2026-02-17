@@ -247,7 +247,19 @@ You can prevent a feed from appearing in the main `All categories` view (you can
 hide = 1
 ```
 
-This property is valid at any level. It will only affect a group if it is set at the group level or above. 
+This property is valid at any level. It will only affect a group if it is set at the group level or above.
+
+### Authenticated feeds
+
+If you have to be an authenticated user to view a feed, you can load credentials from a cookie file in Netscape / Mozilla text format that you can export from your browser:
+
+```toml
+[[feeds]]
+url = "https://example.com/news/rss"
+cookies = "/path/to/your/cookies.txt"
+```
+
+☠️☠️☠️ How you extract these cookies, where you put them, and how you keep them updated is up to you and outside the scope of this document. There are various guides on the internet explaining how to export cookies in this format programmatically from different browsers. I strongly recommend that you whittle the exported file down to include only the individual cookies that you need (e.g. by piping it to `grep` before saving). Make sure that you keep the header line; Python's cookies library doesn't like it if it's missing. The `cookies` option is legal at any level, so you could use one cookies file for all feeds, or more granular individual files. Please keep your cookies file safe -- if you need to access authenticated feeds, I would personally recommend only running Tonguefish locally, so that the file never leaves your computer. Please don't commit it to a repository. I *know* that someone is going to export all their cookies to the root dir of their fork, so I've added the most obvious name to `.gitignore`, but if you call it something else nobody can help you. ☠️☠️☠️
 
 ### Order of transformations
 

@@ -13,6 +13,7 @@ import argparse
 import uuid
 import traceback
 import urllib
+import http.cookiejar
 import xml.etree.ElementTree as ET
 
 from string import Template
@@ -152,6 +153,7 @@ class Config:
         "max_img_width": 0,
         "sort": 0,
         "hide": 0,
+        "cookies": "",
     }
 
     @classmethod
@@ -683,15 +685,26 @@ class Feed:
 
     def update_obj(self, old_feed_obj=None):
         url = self.conf["url"]
+        # TODO preemptively make this forwards compatible with future feedparser
+        etag = None
+        modified = None
+        handlers = None
+        
+        if self.conf["cookies"]:
+            cj = http.cookiejar.MozillaCookieJar(self.conf["cookies"])
+            cj.load()
+            handlers = [urllib.request.HTTPCookieProcessor(cj)]
 
         if old_feed_obj:
             logger.debug("Updating feed %s...", url)
             etag = old_feed_obj.get("etag")
             modified = old_feed_obj.get("modified")
-            feed_obj = feedparser.parse(url, etag=etag, modified=modified)
         else:
             logger.debug("Fetching new feed %s...", url)
-            feed_obj = feedparser.parse(url)
+        
+        
+        
+        feed_obj = feedparser.parse(url, etag=etag, modified=modified, handlers=handlers)
 
         if "status" not in feed_obj:
             logger.warning("%s: update is not well-formed.", url)
@@ -1218,7 +1231,7 @@ if __name__ == "__main__":
     elif args.verbose >= 2:
         log_level = logging.DEBUG
 
-    logging.basicConfig(level=log_level)
+    logging.basicConfig(format='%(asctime)s %(levelname)-8s %(message)s', level=log_level, datefmt='%Y-%m-%d %H:%M:%S')
 
     TempWriter.configure(args.temp_dir)
     Config.configure(os.path.join(args.input_dir, "feeds.toml"))
