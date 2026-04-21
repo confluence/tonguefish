@@ -14,6 +14,7 @@ import uuid
 import traceback
 import urllib
 import http.cookiejar
+import html
 import xml.etree.ElementTree as ET
 
 from string import Template
@@ -382,6 +383,9 @@ class Entry:
         return ET.tostring(video, encoding="unicode")
 
     def fix_image(self, img_str):
+        # Fix mangled HTML entities in alt text
+        img_str = re.sub('(&.*?;)', lambda m: html.escape(html.unescape(m.group(1))) , img_str)
+
         img = ET.fromstring(img_str)
 
         # Load images lazily
