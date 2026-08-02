@@ -6,7 +6,7 @@ Yet another static RSS and Atom feed aggregator
 
 ## What's this?
 
-This is a static generator which produces an extremely compact bird's-eye view of all your feeds on a single webpage.
+This is a static generator that produces an extremely compact bird's-eye view of all your feeds on a single webpage.
 
 ## That sounds like a lot of stuff on one page.
 
@@ -124,7 +124,7 @@ This property cannot be set at the top level. In a category or group section, `t
 
 If a feed has publication dates in a format that `feedparser` doesn't recognise, you can specify your own format (to pass to `strptime`).
 
-If a feed had publication dates in its local time rather than UTC, you can specify the timezone (using the same formats as your local timezone at the top level; see below).
+If a feed has publication dates in its local time rather than UTC, you can specify the timezone (using the same formats as your local timezone at the top level; see below).
 
 ```toml
 [[feeds]]
@@ -158,7 +158,7 @@ Use `content` to search whatever field `tonguefish` decides to use as the conten
 url = "https://example.com/rss"
 
 [feeds.ignore.cheese]
-title = '[Ch]eese'
+title = '[Cc]heese'
 content = 'gouda|cheddar|gorgonzola'
 ```
 
