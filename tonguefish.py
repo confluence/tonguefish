@@ -534,8 +534,9 @@ class Entry:
 
             content = re.sub('</?(li|ul|ol)( .*)?>', process_list, content)
             
-            # Hack to remove trailing unclosed <em> for the same reason
-            content = re.sub('<em>(?!</em>)', '', content)
+            # Hack to remove trailing unclosed formatting for the same reason
+            for tag in "b", "i", "em", "strong":
+                content = re.sub(f'<{tag}>(?!</{tag}>)', '', content)
             
             # Hack to remove article tags, for the same reason (tag mismatch in a feed)
             content = re.sub('</?article.*?>', '', content)
